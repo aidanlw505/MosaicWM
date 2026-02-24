@@ -28,7 +28,6 @@ export class MosaicLayoutStrategy extends Workspace.LayoutStrategy {
             const metaWindow = clone.metaWindow || clone.source?.metaWindow;
             if (!metaWindow) return true;
             if (metaWindow.is_attached_dialog()) return false;
-            if (metaWindow.get_transient_for() !== null) return false;
             return true;
         });
         

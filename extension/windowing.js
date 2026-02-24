@@ -354,12 +354,6 @@ export const WindowingManager = GObject.registerClass({
             return false;
         }
         
-        if (meta_window.get_transient_for() !== null) {
-            const wmClass = meta_window.get_wm_class();
-            Logger.log(`Excluding transient/modal window: ${wmClass}`);
-            return false;
-        }
-        
         return true;
     }
 
