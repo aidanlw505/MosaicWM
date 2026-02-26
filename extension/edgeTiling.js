@@ -973,8 +973,7 @@ export const EdgeTilingManager = GObject.registerClass({
         // If both sides are occupied, move ALL mosaic windows to new workspace
         if (hasLeft && hasRight) {
             Logger.log(`Both sides edge-tiled - moving ${mosaicWindows.length} mosaic windows to new workspace`);
-            const workspaceManager = global.workspace_manager;
-            const newWorkspace = workspaceManager.append_new_workspace(false, global.get_current_time());
+            const newWorkspace = this._windowingManager.createOrReuseAdjacentWorkspace(workspace);
 
             for (const mosaicWindow of mosaicWindows) {
                 mosaicWindow.change_workspace(newWorkspace);
@@ -1031,8 +1030,7 @@ export const EdgeTilingManager = GObject.registerClass({
 
         if (testTileInfo.overflow) {
             Logger.log(`Mosaic overflow detected - moving entire mosaic pack (${mosaicWindows.length} windows) to new workspace`);
-            const workspaceManager = global.workspace_manager;
-            const newWorkspace = workspaceManager.append_new_workspace(false, global.get_current_time());
+            const newWorkspace = this._windowingManager.createOrReuseAdjacentWorkspace(workspace);
 
             for (const mosaicWindow of mosaicWindows) {
                 mosaicWindow.change_workspace(newWorkspace);

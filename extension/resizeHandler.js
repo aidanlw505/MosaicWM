@@ -88,15 +88,16 @@ export const ResizeHandler = GObject.registerClass({
             if (actor) actor.opacity = 255;
             
             let oldWorkspace = window.get_workspace();
-            let newWorkspace = this.windowingManager.moveOversizedWindow(window);
-            if (newWorkspace) {
-                afterAnimations(this.animationsManager, () => {
-                    const monitor = window.get_monitor();
-                    if (monitor !== null) {
-                        this.tilingManager.tileWorkspaceWindows(oldWorkspace, false, monitor, false);
-                    }
-                }, this._timeoutRegistry);
-            }
+            this.windowingManager.moveOversizedWindow(window).then(newWorkspace => {
+                if (newWorkspace) {
+                    afterAnimations(this.animationsManager, () => {
+                        const monitor = window.get_monitor();
+                        if (monitor !== null) {
+                            this.tilingManager.tileWorkspaceWindows(oldWorkspace, false, monitor, false);
+                        }
+                    }, this._timeoutRegistry);
+                }
+            });
             this._resizeOverflowWindow = null;
         } else if (!isEdgeTiled && !skipTiling) {
             this.tilingManager.savePreferredSize(window);
@@ -124,16 +125,17 @@ export const ResizeHandler = GObject.registerClass({
                     const originalWorkspaceIndex = workspace.index();
                     const preMaxSize = WindowState.get(window, 'preferredSize') || WindowState.get(window, 'openingSize');
                     
-                    let newWorkspace = this.windowingManager.moveOversizedWindow(window);
-                    if (newWorkspace) {
-                        WindowState.set(window, 'maximizedUndoInfo', {
-                            originalWorkspace: originalWorkspaceIndex,
-                            currentWorkspace: newWorkspace.index(),
-                            monitor: monitor,
-                            preMaxSize: preMaxSize
-                        });
-                        this.tilingManager.tileWorkspaceWindows(workspace, false, monitor, false);
-                    }
+                    this.windowingManager.moveOversizedWindow(window).then((newWorkspace) => {
+                        if (newWorkspace) {
+                            WindowState.set(window, 'maximizedUndoInfo', {
+                                originalWorkspace: originalWorkspaceIndex,
+                                currentWorkspace: newWorkspace.index(),
+                                monitor: monitor,
+                                preMaxSize: preMaxSize
+                            });
+                            this.tilingManager.tileWorkspaceWindows(workspace, false, monitor, false);
+                        }
+                    });
                 }
             } else if (mode === Meta.SizeChange.UNMAXIMIZE) {
                 WindowState.set(window, 'unmaximizing', true);
@@ -362,10 +364,11 @@ export const ResizeHandler = GObject.registerClass({
 
                         this._resizeOverflowWindow = window;
                         let oldWorkspace = workspace;
-                        let newWorkspace = this.windowingManager.moveOversizedWindow(window);
-                        if (newWorkspace) {
-                            this.tilingManager.tileWorkspaceWindows(oldWorkspace, false, monitor, false);
-                        }
+                        this.windowingManager.moveOversizedWindow(window).then(newWorkspace => {
+                            if (newWorkspace) {
+                                this.tilingManager.tileWorkspaceWindows(oldWorkspace, false, monitor, false);
+                            }
+                        });
                         this._resizeOverflowWindow = null;
                         this._sizeChanged = false;
                         return;

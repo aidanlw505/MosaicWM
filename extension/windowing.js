@@ -203,6 +203,27 @@ export const WindowingManager = GObject.registerClass({
         }
     }
 
+    // Helper to create or reuse an adjacent workspace cleanly
+    createOrReuseAdjacentWorkspace(originWorkspace) {
+        const workspaceManager = global.workspace_manager;
+        const currentIndex = originWorkspace.index();
+        const nextIndex = currentIndex + 1;
+        const totalWorkspaces = workspaceManager.get_n_workspaces();
+        const nextWorkspace = nextIndex < totalWorkspaces ? workspaceManager.get_workspace_by_index(nextIndex) : null;
+        
+        let targetWorkspace = null;
+        if (nextWorkspace && nextWorkspace.list_windows().length === 0) {
+            Logger.log(`[WORKSPACE] Reusing existing empty workspace at WS-${nextIndex}`);
+            targetWorkspace = nextWorkspace;
+        } else {
+            Logger.log(`[WORKSPACE] Creating new workspace and inserting at WS-${nextIndex}`);
+            targetWorkspace = workspaceManager.append_new_workspace(false, this.getTimestamp());
+            workspaceManager.reorder_workspace(targetWorkspace, nextIndex);
+        }
+        
+        return targetWorkspace;
+    }
+
     // Moves a window that doesn't fit into another workspace.
     // Returns a Promise that resolves with the target_workspace when the move and retiling are complete.
     moveOversizedWindow(window) {
@@ -224,30 +245,29 @@ export const WindowingManager = GObject.registerClass({
         
         Logger.log(`moveOversizedWindow: origin=${currentIndex}`);
         
-        let target_workspace = null;
-        let checkIndex = currentIndex + 1;
+        const isSacred = this.isMaximizedOrFullscreen(window);
+        const nextIndex = currentIndex + 1;
         const totalWorkspaces = workspaceManager.get_n_workspaces();
+        let target_workspace = null;
         
-        // Find the first available workspace that can fit the window downstream
-        while (checkIndex < totalWorkspaces) {
-            const checkWorkspace = workspaceManager.get_workspace_by_index(checkIndex);
-            Logger.log(`Checking if window ${window.get_id()} fits in existing workspace ${checkIndex}`);
-            
-            if (this._tilingManager && this._tilingManager.canFitWindow(window, checkWorkspace, monitor)) {
-                target_workspace = checkWorkspace;
-                Logger.log(`Window fits in existing workspace ${checkIndex}`);
-                break;
+        // GNOME's dynamic workspaces might not have a workspace at nextIndex yet
+        const nextWorkspace = nextIndex < totalWorkspaces ? workspaceManager.get_workspace_by_index(nextIndex) : null;
+        
+        if (isSacred) {
+            Logger.log(`[PLACEMENT] Sacred window detected - targeting strictly WS-${nextIndex} for isolation`);
+            target_workspace = this.createOrReuseAdjacentWorkspace(workspaceManager.get_workspace_by_index(currentIndex));
+        } else {
+            Logger.log(`[PLACEMENT] Overflow window detected - targeting strictly WS-${nextIndex}`);
+            if (nextWorkspace && this._tilingManager && this._tilingManager.canFitWindow(window, nextWorkspace, monitor)) {
+                Logger.log(`[PLACEMENT] Window fits in existing adjacent WS-${nextIndex}`);
+                target_workspace = nextWorkspace;
             } else {
-                Logger.log(`Window does NOT fit in workspace ${checkIndex}, checking next...`);
-                checkIndex++;
+                Logger.log(`[PLACEMENT] Adjacent WS-${nextIndex} is full or missing - creating new workspace`);
+                target_workspace = this.createOrReuseAdjacentWorkspace(workspaceManager.get_workspace_by_index(currentIndex));
             }
         }
-        
-        // If no existing workspace can fit it, append a brand new one at the end
-        if (!target_workspace) {
-            Logger.log(`No existing workspace downstream can fit the window - creating new at end`);
-            target_workspace = workspaceManager.append_new_workspace(false, this.getTimestamp());
-        }
+
+
         
         const previous_workspace = window.get_workspace();
         const switchFocusToMovedWindow = previous_workspace.active;
