@@ -84,6 +84,12 @@ export const WindowHandler = GObject.registerClass({
         }
     }
 
+    destroy() {
+        this.unpatchMapWindow();
+        this._evaluationQueue = [];
+        this._isEvaluatingQueue = false;
+    }
+
     _evaluateSlideIn(window) {
         let offsetX = 0, offsetY = 0;
         let animationMode = Clutter.AnimationMode.EASE_OUT_QUART;
@@ -623,18 +629,44 @@ export const WindowHandler = GObject.registerClass({
         }
 
         this._isEvaluatingQueue = true;
+        let lastOverflowWorkspace = null;
 
         while (this._evaluationQueue.length > 0) {
-            const { window, workspace, monitor } = this._evaluationQueue.shift();
+            let { window, workspace, monitor } = this._evaluationQueue.shift();
 
             if (!window || !window.get_compositor_private()) {
                 Logger.log('Evaluation queue: window destroyed before evaluation, skipping');
                 continue;
             }
 
+            // Cascade target workspace if a previous window in this batch caused an overflow
+            if (lastOverflowWorkspace && lastOverflowWorkspace !== workspace) {
+                Logger.log(`Evaluation queue: cascading window ${window.get_id()} to overflow destination WS-${lastOverflowWorkspace.index()}`);
+                workspace = lastOverflowWorkspace;
+                window.change_workspace(workspace);
+            }
+
             Logger.log(`Evaluating queued window ${window.get_id()} (remaining: ${this._evaluationQueue.length})`);
             try {
-                await this._ensureWindowFits(window, workspace, monitor);
+                const resultWorkspace = await this._ensureWindowFits(window, workspace, monitor);
+                if (resultWorkspace && resultWorkspace.index() !== workspace.index()) {
+                    lastOverflowWorkspace = resultWorkspace;
+                }
+
+                const managedWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor)
+                    .filter(w => !this.windowingManager.isExcluded(w));
+
+                if (managedWindows.length === 0) {
+                    // Only renavigate if the workspace is truly empty and not just being transitioned during overflow
+                    const isEjectedByOverflow = lastOverflowWorkspace && lastOverflowWorkspace.index() !== workspace.index();
+                    
+                    if (!isEjectedByOverflow) {
+                        Logger.log(`Queue: Window ${window.get_id()} moved and left WS-${workspace.index()} empty - renavigating`);
+                        this.windowingManager.renavigate(workspace, true, this._ext._lastVisitedWorkspace, monitor);
+                    } else {
+                        Logger.log(`Queue: WS-${workspace.index()} empty due to overflow - skipping renavigate to stay on WS-${lastOverflowWorkspace.index()}`);
+                    }
+                }
             } catch (e) {
                 Logger.error(`Error in evaluation queue for window ${window.get_id()}: ${e}`);
             }
@@ -651,20 +683,16 @@ export const WindowHandler = GObject.registerClass({
         this._isEvaluatingQueue = false;
     }
 
+    // Returns the final workspace the window landed in, useful for tracking overflow destinations
     async _ensureWindowFits(window, workspace, monitor) {
         if (this._ext && !this._ext.isMosaicEnabledForWorkspace(workspace)) {
             Logger.log('ensureWindowFits: Skipping - mosaic disabled for workspace');
-            return;
+            return workspace;
         }
 
         if (WindowState.get(window, 'isSmartResizing')) {
             Logger.log('ensureWindowFits: Skipping - smart resize in progress');
-            return;
-        }
-
-        if (WindowState.get(window, 'movedByOverflow')) {
-            Logger.log('ensureWindowFits: Skipping - window was moved by overflow');
-            return;
+            return workspace;
         }
 
         this.tilingManager.savePreferredSize(window);
@@ -677,8 +705,7 @@ export const WindowHandler = GObject.registerClass({
 
         if (hasExistingSacred || (isIncomingSacred && otherWindows.length > 0)) {
             Logger.log(`Sacred Isolation triggered (IncomingSacred: ${isIncomingSacred}, HasExistingSacred: ${hasExistingSacred}) - isolating`);
-            await this.windowingManager.moveOversizedWindow(window);
-            return;
+            return await this.windowingManager.moveOversizedWindow(window, { switchFocus: this._evaluationQueue.length === 0 });
         }
 
         // Path 2: DnD Arrival Handling (Expansion)
@@ -717,7 +744,7 @@ export const WindowHandler = GObject.registerClass({
                 Logger.log('Window fits - adding to tiling via queue');
                 this.tilingManager.tileWorkspaceWindows(workspace, null, monitor, false);
             });
-            return;
+            return workspace;
         }
 
         // Path 4: Smart Resize attempt
@@ -742,18 +769,13 @@ export const WindowHandler = GObject.registerClass({
                 this.tilingManager.enqueueWindowOpen(window.get_id(), () => {
                     this.tilingManager.tileWorkspaceWindows(workspace, window, monitor, false);
                 });
-                return;
+                return workspace;
             }
         }
 
         // Path 5: Overflow (Final fallback)
-
-        // Only move if smart resize is not blocking overflow decisions
-        if (!this.tilingManager._isSmartResizingBlocked) {
-            await this.windowingManager.moveOversizedWindow(window);
-        } else {
-            Logger.log('Deferring overflow - smart resize still in progress');
-        }
+        Logger.log('Smart resize failed or skipped - applying Overflow logic');
+        return await this.windowingManager.moveOversizedWindow(window, { switchFocus: this._evaluationQueue.length === 0 });
     }
     onWindowCreated(window) {
         this.windowingManager.invalidateWindowsCache();
@@ -1062,8 +1084,12 @@ export const WindowHandler = GObject.registerClass({
                         Logger.log('_windowRemoved: Workspace already destroyed, skipping navigation');
                         return GLib.SOURCE_REMOVE;
                     }
-                    Logger.log('_windowRemoved: Workspace truly empty, navigating away');
-                    this._ext.windowingManager.renavigate(WORKSPACE, WORKSPACE.active, this._ext._lastVisitedWorkspace, MONITOR);
+                    if (wasMovedByOverflow) {
+                        Logger.log('_windowRemoved: Workspace empty but window was moved by overflow - skipping navigation');
+                    } else {
+                        Logger.log('_windowRemoved: Workspace truly empty, navigating away');
+                        this._ext.windowingManager.renavigate(WORKSPACE, WORKSPACE.active, this._ext._lastVisitedWorkspace, MONITOR);
+                    }
 
                     // Cleanup flag (if any)
                     WindowState.remove(window, 'isRestoringSacred');
@@ -1273,7 +1299,8 @@ export const WindowHandler = GObject.registerClass({
             Logger.log(`Window ${WINDOW.get_id()} ready: size=${rect.width}x${rect.height}, workArea=${wa.width}x${wa.height}`);
 
             if (WindowState.get(WINDOW, 'movedByOverflow')) {
-                Logger.log(`Skipping early tile in waitForGeometry - window was moved by overflow`);
+                Logger.log(`Skipping early tile in waitForGeometry - window was moved by overflow (Flags cleared to prevent leakage)`);
+                WindowState.remove(WINDOW, 'movedByOverflow');
                 return GLib.SOURCE_REMOVE;
             }
 
@@ -1299,6 +1326,10 @@ export const WindowHandler = GObject.registerClass({
             }
 
             const performTiling = async () => {
+                if (WindowState.get(WINDOW, 'movedByOverflow')) {
+                     Logger.log(`Skipping duplicate evaluation queueing - window was already evaluated and moved by overflow`);
+                     return;
+                }
                 this.enqueueWindowForEvaluation(WINDOW, WORKSPACE, MONITOR);
             };
 

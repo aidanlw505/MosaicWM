@@ -226,7 +226,7 @@ export const WindowingManager = GObject.registerClass({
 
     // Moves a window that doesn't fit into another workspace.
     // Returns a Promise that resolves with the target_workspace when the move and retiling are complete.
-    moveOversizedWindow(window) {
+    moveOversizedWindow(window, options = { switchFocus: true }) {
         return new Promise(resolve => {
             const workspaceManager = global.workspace_manager;
             const monitor = this.getPrimaryMonitor();
@@ -266,21 +266,14 @@ export const WindowingManager = GObject.registerClass({
                 target_workspace = this.createOrReuseAdjacentWorkspace(workspaceManager.get_workspace_by_index(currentIndex));
             }
         }
-
-
         
         const previous_workspace = window.get_workspace();
-        const switchFocusToMovedWindow = previous_workspace.active;
+        // Respect the queue's request to NOT shift the camera focus if we're processing a batch of windows
+        const switchFocusToMovedWindow = previous_workspace.active && options.switchFocus !== false;
         
         window.change_workspace(target_workspace);
         
-        // Clear flags after settling
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.REVERSE_RESIZE_PROTECTION_MS, () => {
-            WindowState.set(window, 'movedByOverflow', false);
-            WindowState.remove(window, 'overflowOriginWorkspace');
-            return GLib.SOURCE_REMOVE;
-        });
-                // Defer activation to next idle (no artificial delay)
+        // Defer activation to next idle (no artificial delay)
             GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
                 const workspaceIndex = target_workspace.index();
                 if (workspaceIndex < 0 || workspaceIndex >= workspaceManager.get_n_workspaces()) {
@@ -296,14 +289,27 @@ export const WindowingManager = GObject.registerClass({
                 
                 // Re-tile after window has settled
                 if (this._tilingManager) {
-                    Logger.log(`moveOversizedWindow: workspace switch done, waiting for animation then retiling`);
+                    Logger.log(`moveOversizedWindow: workspace switch done, retiling immediately and then waiting for animations`);
+                    
+                    // First, repair any aborted smart-resize corruption in the origin workspace before the window was ejected
+                    if (previous_workspace.index() !== target_workspace.index()) {
+                        this._tilingManager.tileWorkspaceWindows(previous_workspace, null, monitor);
+                    }
+                    
+                    // Tile target workspace IMMEDIATELY to prevent "leap to 0,0"
+                    this._tilingManager.tileWorkspaceWindows(target_workspace, null, monitor);
+
                     afterWorkspaceSwitch(() => {
                         try {
+                            // Perfectly tile the target workspace again after GNOME animations finish
                             this._tilingManager.tileWorkspaceWindows(target_workspace, null, monitor);
                             
                             // Check position after tiling
                             GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
                                 try {
+                                    if (!window || !window.get_compositor_private()) {
+                                        return;
+                                    }
                                     const finalFrame = window.get_frame_rect();
                                     const workArea = target_workspace.get_work_area_for_monitor(monitor);
                                     const expectedX = Math.floor((workArea.width - finalFrame.width) / 2) + workArea.x;
@@ -315,6 +321,9 @@ export const WindowingManager = GObject.registerClass({
                                         this._tilingManager.tileWorkspaceWindows(target_workspace, null, monitor);
                                     }
                                 } finally {
+                                    WindowState.remove(window, 'movedByOverflow');
+                                    WindowState.remove(window, 'overflowOriginWorkspace');
+
                                     if (this._overflowEndCallback) {
                                         this._overflowEndCallback();
                                     }
@@ -324,6 +333,10 @@ export const WindowingManager = GObject.registerClass({
                             });
                         } catch (e) {
                             Logger.error(`Error during moveOversizedWindow retiling: ${e}`);
+                            
+                            WindowState.remove(window, 'movedByOverflow');
+                            WindowState.remove(window, 'overflowOriginWorkspace');
+
                             if (this._overflowEndCallback) {
                                 this._overflowEndCallback();
                             }
@@ -331,6 +344,12 @@ export const WindowingManager = GObject.registerClass({
                         }
                     }, this._timeoutRegistry);
                 } else {
+                    WindowState.remove(window, 'movedByOverflow');
+                    WindowState.remove(window, 'overflowOriginWorkspace');
+
+                    if (this._overflowEndCallback) {
+                        this._overflowEndCallback();
+                    }
                     resolve(target_workspace);
                 }
                 

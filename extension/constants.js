@@ -36,7 +36,7 @@ export const ANIMATION_MODE_MOMENTUM = Clutter.AnimationMode.EASE_OUT_BACK; // B
 // Minimum dimensions for tiling
 export const MIN_WINDOW_WIDTH = 400;
 export const MIN_WINDOW_HEIGHT = 100;
-export const ABSOLUTE_MIN_HEIGHT = 200;
+export const ABSOLUTE_MIN_HEIGHT = 100;
 
 // Edge detection threshold
 export const EDGE_TILING_THRESHOLD = 10;
@@ -71,8 +71,8 @@ export const SMART_RESIZE_DETECTION_DELTA_PX = 2;    // Tolerance (in pixels) to
 export const SMART_RESIZE_MAX_ITERATIONS = 10;       // Maximum cycles before declaring overflow
 export const SMART_RESIZE_ITERATION_DEBOUNCE_MS = 100;  // Delay between cycles to let Mutter apply resize
 export const SMART_RESIZE_LEARNING_DEBOUNCE_MS = 200;  // Delay before checking window movement
-export const SMART_RESIZE_MIN_WINDOW_WIDTH = 250;    // Minimum window size during smart resize
-export const SMART_RESIZE_MIN_WINDOW_HEIGHT = 250;   // Minimum window size during smart resize
+export const SMART_RESIZE_MIN_WINDOW_WIDTH = 100;    // Minimum window size during smart resize
+export const SMART_RESIZE_MIN_WINDOW_HEIGHT = 100;   // Minimum window size during smart resize
 
 // Slide-in animation for new windows
 export const SLIDE_IN_OFFSET_PX = 100;        // Offset in pixels for new window slide-in animation

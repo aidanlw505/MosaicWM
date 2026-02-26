@@ -436,9 +436,9 @@ export default class WindowMosaicExtension extends Extension {
             this._injectionManager = null;
         }
 
-        // Restore original map animation
+        // Restore original map animation and cleanup queue
         if (this.windowHandler) {
-            this.windowHandler.unpatchMapWindow();
+            this.windowHandler.destroy();
         }
 
         Main.wm.removeKeybinding('tile-left');
