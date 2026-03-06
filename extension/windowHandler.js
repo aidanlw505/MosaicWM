@@ -630,6 +630,10 @@ export const WindowHandler = GObject.registerClass({
 
         this._isEvaluatingQueue = true;
         let lastOverflowWorkspace = null;
+        // Track the expected workspace so we can detect manual user switches
+        let expectedWorkspace = null;
+        // Track workspaces that already overflowed to prevent infinite cascade loops.
+        const overflowedWorkspaces = new Set();
 
         while (this._evaluationQueue.length > 0) {
             let { window, workspace, monitor } = this._evaluationQueue.shift();
@@ -639,18 +643,43 @@ export const WindowHandler = GObject.registerClass({
                 continue;
             }
 
-            // Cascade target workspace if a previous window in this batch caused an overflow
-            if (lastOverflowWorkspace && lastOverflowWorkspace !== workspace) {
-                Logger.log(`Evaluation queue: cascading window ${window.get_id()} to overflow destination WS-${lastOverflowWorkspace.index()}`);
-                workspace = lastOverflowWorkspace;
+            // Use the active workspace as the source of truth to detect manual user switches.
+            const activeWorkspace = this.windowingManager.getWorkspace();
+            const targetWorkspace = lastOverflowWorkspace || expectedWorkspace || workspace;
+
+            if (activeWorkspace && targetWorkspace && activeWorkspace.index() !== targetWorkspace.index()) {
+                Logger.log(`Evaluation queue: User switched to WS-${activeWorkspace.index()} during processing (expected WS-${targetWorkspace.index()}) - following user`);
+                workspace = activeWorkspace;
+                lastOverflowWorkspace = null; // Reset overflow cascade — user intent takes priority
+                overflowedWorkspaces.clear();
                 window.change_workspace(workspace);
+            } else if (lastOverflowWorkspace && lastOverflowWorkspace !== workspace) {
+                // Check if the overflow destination already failed — stop cascading to prevent loops
+                if (overflowedWorkspaces.has(lastOverflowWorkspace.index())) {
+                    Logger.log(`Evaluation queue: overflow destination WS-${lastOverflowWorkspace.index()} already failed - stopping cascade, window ${window.get_id()} stays on WS-${workspace.index()}`);
+                    lastOverflowWorkspace = null;
+                } else {
+                    // Cascade target workspace if a previous window in this batch caused an overflow
+                    Logger.log(`Evaluation queue: cascading window ${window.get_id()} to overflow destination WS-${lastOverflowWorkspace.index()}`);
+                    workspace = lastOverflowWorkspace;
+                    
+                    if (window.get_workspace() !== workspace) {
+                        WindowState.set(window, 'movedByOverflow', true);
+                        window.change_workspace(workspace);
+                    }
+                }
             }
 
-            Logger.log(`Evaluating queued window ${window.get_id()} (remaining: ${this._evaluationQueue.length})`);
+            // Track the expected workspace for the next iteration
+            expectedWorkspace = workspace;
+
+            Logger.log(`Evaluating queued window ${window.get_id()} on WS-${workspace.index()} (remaining: ${this._evaluationQueue.length})`);
             try {
                 const resultWorkspace = await this._ensureWindowFits(window, workspace, monitor);
                 if (resultWorkspace && resultWorkspace.index() !== workspace.index()) {
+                    overflowedWorkspaces.add(workspace.index());
                     lastOverflowWorkspace = resultWorkspace;
+                    expectedWorkspace = resultWorkspace;
                 }
 
                 const managedWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor)
@@ -695,8 +724,6 @@ export const WindowHandler = GObject.registerClass({
             return workspace;
         }
 
-        this.tilingManager.savePreferredSize(window);
-
         // Path 1: Sacred Isolation - Symmetric isolation enforcement.
         const isIncomingSacred = this.windowingManager.isMaximizedOrFullscreen(window);
         const hasExistingSacred = this.windowingManager.hasSacredWindow(workspace, monitor, window.get_id());
@@ -705,8 +732,11 @@ export const WindowHandler = GObject.registerClass({
 
         if (hasExistingSacred || (isIncomingSacred && otherWindows.length > 0)) {
             Logger.log(`Sacred Isolation triggered (IncomingSacred: ${isIncomingSacred}, HasExistingSacred: ${hasExistingSacred}) - isolating`);
-            return await this.windowingManager.moveOversizedWindow(window, { switchFocus: this._evaluationQueue.length === 0 });
+            return await this.windowingManager.moveOversizedWindow(window);
         }
+
+        // Save preferred size AFTER sacred checks — prevents capturing monitor-sized dimensions
+        this.tilingManager.savePreferredSize(window);
 
         // Path 2: DnD Arrival Handling (Expansion)
         if (WindowState.get(window, 'arrivedFromDnD')) {
@@ -775,7 +805,7 @@ export const WindowHandler = GObject.registerClass({
 
         // Path 5: Overflow (Final fallback)
         Logger.log('Smart resize failed or skipped - applying Overflow logic');
-        return await this.windowingManager.moveOversizedWindow(window, { switchFocus: this._evaluationQueue.length === 0 });
+        return await this.windowingManager.moveOversizedWindow(window);
     }
     onWindowCreated(window) {
         this.windowingManager.invalidateWindowsCache();
@@ -806,6 +836,16 @@ export const WindowHandler = GObject.registerClass({
                          if (saved && saved.width > 0 && saved.height > 0) {
                              WindowState.set(window, 'openingSize', { width: saved.width, height: saved.height });
                              Logger.log(`onWindowCreated: Captured openingSize fallback from saved_rect: ${saved.width}x${saved.height}`);
+                         } else {
+                             // Fallback for natively fullscreen apps with no saved_rect:
+                             // Use 80% of work area as a reasonable default window size
+                             const workArea = workspace.get_work_area_for_monitor(monitor);
+                             if (workArea) {
+                                 const fallbackWidth = Math.floor(workArea.width * 0.8);
+                                 const fallbackHeight = Math.floor(workArea.height * 0.8);
+                                 WindowState.set(window, 'openingSize', { width: fallbackWidth, height: fallbackHeight });
+                                 Logger.log(`onWindowCreated: No saved_rect for fullscreen window - using 80% fallback: ${fallbackWidth}x${fallbackHeight}`);
+                             }
                          }
                     } catch (e) {
                          Logger.warn(`onWindowCreated: Failed to capture saved_rect: ${e.message}`);
@@ -935,8 +975,16 @@ export const WindowHandler = GObject.registerClass({
         // Capture natural size immediately upon arrival to a workspace
         this._ext.tilingManager.savePreferredSize(window);
 
-        // Abort any ongoing smart resize immediately to prevent 'zombie' logic
-        this._ext.tilingManager.abortActiveSmartResize();
+        // Only abort smart resize for cross-workspace arrivals; same-workspace waits to be queued sequentially.
+        if (this._ext.tilingManager._activeSmartResize) {
+            const resizeWorkspace = this._ext.tilingManager._activeSmartResizeWorkspace;
+            if (!resizeWorkspace || resizeWorkspace.index() !== workspace.index()) {
+                Logger.log(`onWindowAdded: Aborting smart resize - new window on different workspace`);
+                this._ext.tilingManager.abortActiveSmartResize();
+            } else {
+                Logger.log(`onWindowAdded: Smart resize active on same workspace - will queue after completion`);
+            }
+        }
 
         // Mark window as newly added for overflow protection logic
         WindowState.set(window, 'addedTime', Date.now());
@@ -1305,8 +1353,9 @@ export const WindowHandler = GObject.registerClass({
             }
 
             if (Main.overview.visible) {
-                Logger.log(`Window created while overview visible - tiling now + after hide`);
+                Logger.log(`Window created while overview visible - deferring evaluation until overview hidden`);
                 WindowState.set(WINDOW, 'createdDuringOverview', true);
+                WindowState.set(WINDOW, 'deferTilingUntilOverviewHidden', true);
                 this._ext.tilingManager.savePreferredSize(WINDOW);
                 this.connectWindowSignals(WINDOW);
                 this._ext.tilingManager.calculateLayoutsOnly();

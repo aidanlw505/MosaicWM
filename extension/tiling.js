@@ -556,6 +556,8 @@ export const TilingManager = GObject.registerClass({
         this._isSmartResizingBlocked = false;
         // Reference to the currently active SmartResizeIterator
         this._activeSmartResize = null;
+        // Track which workspace the active smart resize is operating on
+        this._activeSmartResizeWorkspace = null;
         
         // Layout cache to avoid redundant O(n!) permutation calculations
         this._lastLayoutHash = null;
@@ -1703,11 +1705,6 @@ export const TilingManager = GObject.registerClass({
         let work_area = working_info.work_area;
         let monitor = working_info.monitor;
 
-        // CRITICAL: Mark all windows as constrained BEFORE any physical move/resize triggers signals
-        for (const window of windows) {
-            WindowState.set(window, 'isConstrainedByMosaic', true);
-        }
-
         const workspace_windows = this._windowingManager.getMonitorWorkspaceWindows(workspace, monitor);
         
         let edgeTiledWindows = [];
@@ -2128,6 +2125,17 @@ export const TilingManager = GObject.registerClass({
         // Get frame size (window is not sacred here)
         const frame = window.get_frame_rect();
         size = { width: frame.width, height: frame.height };
+        
+        // Reject monitor-sized dimensions — no window's preferred size should match the screen
+        const workspace = window.get_workspace();
+        const monitor = window.get_monitor();
+        if (workspace && monitor !== null && monitor !== undefined) {
+            const workArea = workspace.get_work_area_for_monitor(monitor);
+            if (workArea && size.width >= workArea.width && size.height >= workArea.height) {
+                Logger.log(`savePreferredSize: Rejected monitor-sized dimensions ${size.width}x${size.height} for ${window.get_id()}`);
+                return;
+            }
+        }
                                
         if (size && size.width > 10 && size.height > 10) {
             // Block save during maximize/fullscreen transitions
@@ -2138,21 +2146,20 @@ export const TilingManager = GObject.registerClass({
 
             const current = WindowState.get(window, 'preferredSize');
             
-            // Only save expansions to protect preferredSize integrity
             if (!current) {
                 WindowState.set(window, 'preferredSize', size);
                 Logger.log(`savePreferredSize: [INITIAL] Window ${window.get_id()} set to ${size.width}x${size.height}`);
             } else {
-                // Only update if it's a significant change and primarily an expansion or 
-                // if we are not constrained (though constrained windows already skip earlier)
                 const isExpansion = (size.width > current.width + 5) || (size.height > current.height + 5);
+                const isContraction = (size.width < current.width - 5) || (size.height < current.height - 5);
                 const isSmallChange = Math.abs(size.width - current.width) <= 2 && Math.abs(size.height - current.height) <= 2;
 
-                if (isExpansion) {
+                if (isExpansion || isContraction) {
                     WindowState.set(window, 'preferredSize', size);
-                    Logger.log(`savePreferredSize: [EXPANSION] Window ${window.get_id()} updated ${current.width}x${current.height} -> ${size.width}x${size.height}`);
+                    const label = isExpansion ? 'EXPANSION' : 'CONTRACTION';
+                    Logger.log(`savePreferredSize: [${label}] Window ${window.get_id()} updated ${current.width}x${current.height} -> ${size.width}x${size.height}`);
                 } else if (!isSmallChange) {
-                    Logger.log(`savePreferredSize: [REJECTED] Window ${window.get_id()} tried to save smaller/diff size ${size.width}x${size.height} (current ${current.width}x${current.height})`);
+                    Logger.log(`savePreferredSize: [SKIP] Window ${window.get_id()} size ${size.width}x${size.height} within threshold of ${current.width}x${current.height}`);
                 }
             }
         } else {
@@ -2352,6 +2359,7 @@ export const TilingManager = GObject.registerClass({
             
             const iterator = new SmartResizeIterator(windows, newWindow, workArea, this);
             this._activeSmartResize = iterator;
+            this._activeSmartResizeWorkspace = newWindow.get_workspace();
             
             try {
                 Logger.log(`[SMART RESIZE] tryFitWithResize START: ${windows.length + 1} total windows (${windows.length} existing + 1 new)`);
@@ -2395,17 +2403,17 @@ export const TilingManager = GObject.registerClass({
                 Logger.error(`[SMART RESIZE] Critical error in iterator: ${e.message}`);
                 return false;
             } finally {
-                // Ensure all flags are cleared, especially if aborted
+                // Clear isSmartResizing flags but preserve targetSmartResizeSize on success.
                 const allInvolvedWindows = [...windows, newWindow];
                 for (const window of allInvolvedWindows) {
                     if (WindowState.get(window, 'isSmartResizing')) {
                         WindowState.set(window, 'isSmartResizing', false);
                     }
-                    WindowState.set(window, 'targetSmartResizeSize', null);
                 }
 
                 this._isSmartResizingBlocked = false;
                 this._activeSmartResize = null;
+                this._activeSmartResizeWorkspace = null;
                 Logger.log(`[SMART RESIZE] tryFitWithResize finished - unblocked overflow - flags cleared`);
             }
         });
@@ -2416,6 +2424,7 @@ export const TilingManager = GObject.registerClass({
         if (this._activeSmartResize) {
             this._activeSmartResize.abort();
             this._activeSmartResize = null;
+            this._activeSmartResizeWorkspace = null;
         }
     }
 

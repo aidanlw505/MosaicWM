@@ -239,9 +239,8 @@ export const WindowingManager = GObject.registerClass({
             // Flag window as overflow-moved to prevent tiling errors
             WindowState.set(window, 'movedByOverflow', true);
         
-        // Track origin workspace across multiple calls
-        const currentIndex = WindowState.get(window, 'overflowOriginWorkspace') ?? window.get_workspace().index();
-        WindowState.set(window, 'overflowOriginWorkspace', currentIndex);
+        // Use current workspace as origin to prevent overflow target loops.
+        const currentIndex = window.get_workspace().index();
         
         Logger.log(`moveOversizedWindow: origin=${currentIndex}`);
         

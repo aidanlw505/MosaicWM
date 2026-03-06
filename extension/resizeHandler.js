@@ -223,7 +223,22 @@ export const ResizeHandler = GObject.registerClass({
             const isConstrained = WindowState.get(window, 'isConstrainedByMosaic');
             const isManualResizeAction = this._currentGrabOp && isResizeGrabOp(this._currentGrabOp);
             
-            if (isManualResizeAction) {
+            // If constrained but dimensions differ significantly from Smart Resize target,
+            // assume an external or ambient resize and lift the constraint.
+            let userForcedResize = isManualResizeAction;
+            if (!userForcedResize && isConstrained) {
+                 const target = WindowState.get(window, 'targetSmartResizeSize');
+                 if (target) {
+                     const wDiff = Math.abs(rect.width - target.width);
+                     const hDiff = Math.abs(rect.height - target.height);
+                     if (wDiff > 10 || hDiff > 10) {
+                          userForcedResize = true;
+                          Logger.log(`Detected ambient/client-side resize for constrained window ${window.get_id()} (delta: ${wDiff}x${hDiff})`);
+                     }
+                 }
+            }
+            
+            if (userForcedResize) {
                 // Manual resize always updates preferredSize and clears constraints
                 WindowState.set(window, 'preferredSize', { width: rect.width, height: rect.height });
                 if (isConstrained) {
@@ -300,8 +315,10 @@ export const ResizeHandler = GObject.registerClass({
                         
                         // Block moves during smart resize to prevent expelling windows on revert.
                         const isSmartResizing = this.tilingManager._isSmartResizingBlocked;
+                        // Skip ghost detection right after smart resize to prevent false positives from unsettled rects.
+                        const wasSmartResized = WindowState.get(window, 'smartResizeApplied');
 
-                        if (!canFit && !this._resizeInOverflow && !isSolo && !isSmartResizing) {
+                        if (!canFit && !this._resizeInOverflow && !isSolo && !isSmartResizing && !wasSmartResized) {
                             if (WindowState.get(window, 'waitingForGeometry') || !WindowState.get(window, 'geometryReady')) {
                                 return GLib.SOURCE_REMOVE;
                             }
