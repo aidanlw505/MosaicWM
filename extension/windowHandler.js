@@ -105,7 +105,7 @@ export const WindowHandler = GObject.registerClass({
         const existingWindows = ws.list_windows().filter(w =>
             w.get_monitor() === mon &&
             w.get_id() !== window.get_id() &&
-            !w.is_hidden() &&
+            !w.minimized &&
             w.get_window_type() === Meta.WindowType.NORMAL &&
             !this.windowingManager.isExcluded(w) &&
             w.showing_on_its_workspace()
