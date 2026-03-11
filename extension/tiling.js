@@ -61,6 +61,7 @@ class SmartResizeIterator {
         this.maxIterations = constants.SMART_RESIZE_MAX_ITERATIONS;
         this.MIN_MOVEMENT_ITERATIONS = 2;   // Require 2 iterations without movement to confirm minimum (avoid false positives)
         this.consecutiveTimeouts = 0;       // Counter of consecutive timeouts in event-driven wait
+        this._ext = tilingManager._extension; // Access to TimeoutRegistry for async waits
         
         const actuallyResizable = this.resizableWindows.length - this.windowsAtMinimum.size;
         Logger.log(`[SMART RESIZE] SmartResizeIterator created for ${this.resizableWindows.length} resizable windows (${this.nonResizableWindows.length} non-resizable, ${this.windowsAtMinimum.size} already at minimum) - ${actuallyResizable} available for resize`);
