@@ -107,7 +107,7 @@ export const WindowingManager = GObject.registerClass({
 
     moveBackWindow(window) {
         let workspace = window.get_workspace();
-        let active = workspace.active;
+        const active = global.workspace_manager.get_active_workspace() === workspace;
         let previous_workspace = workspace.get_neighbor(Meta.MotionDirection.LEFT);
 
         if (!previous_workspace) {
@@ -268,7 +268,7 @@ export const WindowingManager = GObject.registerClass({
         
         const previous_workspace = window.get_workspace();
         // Respect the queue's request to NOT shift the camera focus if we're processing a batch of windows
-        const switchFocusToMovedWindow = previous_workspace.active && options.switchFocus !== false;
+        const switchFocusToMovedWindow = (global.workspace_manager.get_active_workspace() === previous_workspace) && options.switchFocus !== false;
         
         window.change_workspace(target_workspace);
         

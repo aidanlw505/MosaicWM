@@ -97,8 +97,12 @@ class SmartResizeIterator {
 
         for (const window of this.allWindows) {
             // Check if window is destroyed or moved to another workspace/monitor unexpectedly
+            if (!window) {
+                Logger.log(`[SMART RESIZE] Validation FAILED: Window is gone`);
+                return false;
+            }
             const actor = window.get_compositor_private();
-            if (!window || !actor || actor.is_destroyed()) {
+            if (!actor || actor.is_destroyed()) {
                 Logger.log(`[SMART RESIZE] Validation FAILED: Window ${window ? window.get_id() : 'unknown'} is gone`);
                 return false;
             }
@@ -1853,7 +1857,7 @@ export const TilingManager = GObject.registerClass({
         }
         
         // DRY RUN: If dryRun flag is set, return overflow without moving anything
-        if (arguments[5] === true) {
+        if (dryRun) {
             return { overflow, layout: this._cachedTileResult?.windows || null };
         }
 
@@ -1877,7 +1881,7 @@ export const TilingManager = GObject.registerClass({
                 // FORCE RESIZE ATTEMPT IF NEEDED
                 // If it's a sacred return, we MUST try to fit it, even if it means squishing everyone.
                 if (WindowState.get(reference_meta_window, 'isRestoringSacred')) {
-                     const workArea = this._getWorkArea(workspace, monitor);
+                     const workArea = this.getUsableWorkArea(workspace, monitor);
                      const existingWindows = windows.filter(w => w.id !== reference_meta_window.get_id()).map(w => w.window); // Need MetaWindows
                      // We need actual MetaWindows for tryFit, but 'windows' here are descriptors.
                      // Re-fetch real windows.
@@ -1887,10 +1891,8 @@ export const TilingManager = GObject.registerClass({
                      // Only try resize if we haven't already (to avoid loops)
                      if (!WindowState.get(reference_meta_window, 'isSmartResizing')) {
                          Logger.log(`Triggering Smart Resize for returning sacred window`);
-                         if (this.tryFitWithResize(reference_meta_window, realExisting, workArea)) {
-                             Logger.log(`Sacred window fitted with resize!`);
-                             return { overflow: false, layout: null }; // Return early to let resize happen
-                         }
+                         this.tryFitWithResize(reference_meta_window, realExisting, workArea);
+                         return { overflow: false, layout: null }; // Return early to let async resize handle it
                      }
                 }
             } else {
@@ -2018,22 +2020,18 @@ export const TilingManager = GObject.registerClass({
             !edgeTiledIds.includes(w.id)
         );
         
-        // Use same dimension priority as WindowDescriptor for consistency
-        // with tileWorkspaceWindows. Priority: targetRestoredSize → targetSmartResizeSize → frame_rect
+        // Use actual frame dimensions for existing windows to avoid stale targetSmartResizeSize
+        // causing false overflow. Only targetRestoredSize is honored (active unmaximize flow).
         const workspaceWindows = workspace.list_windows();
-        
+
         for (const w of windows) {
             const realWindow = workspaceWindows.find(win => win.get_id() === w.id);
             if (realWindow) {
                 const restoredSize = WindowState.get(realWindow, 'targetRestoredSize');
-                const smartResizeSize = WindowState.get(realWindow, 'targetSmartResizeSize');
-                
+
                 if (restoredSize) {
                     w.width = restoredSize.width;
                     w.height = restoredSize.height;
-                } else if (smartResizeSize) {
-                    w.width = smartResizeSize.width;
-                    w.height = smartResizeSize.height;
                 } else {
                     const realFrame = realWindow.get_frame_rect();
                     w.width = realFrame.width;

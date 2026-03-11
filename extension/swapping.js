@@ -375,9 +375,7 @@ export const SwappingManager = GObject.registerClass({
         
         const workArea = workspace.get_work_area_for_monitor(monitor);
         this._edgeTilingManager.applyTile(mosaicWindow, tiledZone, workArea, true);
-        
-        this._edgeTilingManager.applyTile(mosaicWindow, tiledZone, workArea, true);
-        
+
         WindowState.set(mosaicWindow, 'lastSwapTime', GLib.get_monotonic_time() / 1000);
         WindowState.set(tiledWindow, 'lastSwapTime', GLib.get_monotonic_time() / 1000);
         return true;
@@ -393,9 +391,6 @@ export const SwappingManager = GObject.registerClass({
         Logger.log(`Swapping tiled windows: ${window1.get_id()} ↔ ${window2.get_id()}`);
         
         const workArea = workspace.get_work_area_for_monitor(monitor);
-        this._edgeTilingManager.applyTile(window1, zone2, workArea);
-        this._edgeTilingManager.applyTile(window2, zone1, workArea);
-        
         this._edgeTilingManager.applyTile(window1, zone2, workArea);
         this._edgeTilingManager.applyTile(window2, zone1, workArea);
         

@@ -233,7 +233,8 @@ export const WindowHandler = GObject.registerClass({
         // Final cleanup signal
         ids.push(window.connect('unmanaged', (win) => {
             Logger.log(`Window ${win.get_id()} (unmanaged) - cleaning up`);
-            this.onWindowRemoved(win.get_workspace(), win);
+            const ws = win.get_workspace();
+            if (ws) this.onWindowRemoved(ws, win);
             this.disconnectWindowSignals(win);
         }));
 
@@ -1156,7 +1157,7 @@ export const WindowHandler = GObject.registerClass({
                         Logger.log('_windowRemoved: Workspace empty but window was moved by overflow - skipping navigation');
                     } else {
                         Logger.log('_windowRemoved: Workspace truly empty, navigating away');
-                        this._ext.windowingManager.renavigate(WORKSPACE, WORKSPACE.active, this._ext._lastVisitedWorkspace, MONITOR);
+                        this._ext.windowingManager.renavigate(WORKSPACE, global.workspace_manager.get_active_workspace() === WORKSPACE, this._ext._lastVisitedWorkspace, MONITOR);
                     }
 
                     // Cleanup flag (if any)

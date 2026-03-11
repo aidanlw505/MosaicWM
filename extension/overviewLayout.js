@@ -70,7 +70,7 @@ export class MosaicLayoutStrategy extends Workspace.LayoutStrategy {
             // Map absolute screen coordinates to the Overview slot
             // Primary: Mosaic Cache (stable positions)
             // Secondary Fallback: Real Window Frame (ensures visibility if cache is missing)
-            const rect = ComputedLayouts.get(mw.get_id()) || mw.get_frame_rect();
+            const rect = ComputedLayouts.get(mw) || mw.get_frame_rect();
             if (!rect) continue;
             
             // Formula: (DesktopPos - DesktopOrigin) * Scale + OverviewSlotOrigin + CenteringOffset
