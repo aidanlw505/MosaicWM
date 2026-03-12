@@ -65,9 +65,10 @@ export const DragHandler = GObject.registerClass({
             const actor = win.get_compositor_private();
             if (actor) actor.opacity = 255;
             
-            this.windowingManager.moveOversizedWindow(win);
+            this.windowingManager.moveOversizedWindow(win).catch(e =>
+                Logger.error(`Ghost window overflow failed: ${e}`));
         }
-        
+
         this._edgeTileGhostWindows = [];
     }
 
@@ -179,7 +180,8 @@ export const DragHandler = GObject.registerClass({
             this.drawingManager.removeBoxes();
             
             const oldWorkspace = window.get_workspace();
-            this.windowingManager.moveOversizedWindow(window);
+            this.windowingManager.moveOversizedWindow(window).catch(e =>
+                Logger.error(`Drag overflow failed: ${e}`));
             afterAnimations(this.animationsManager, () => {
                 const monitor = window.get_monitor();
                 if (monitor !== null) {

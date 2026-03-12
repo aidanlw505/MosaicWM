@@ -765,7 +765,10 @@ export const TilingManager = GObject.registerClass({
         Logger.log(`Enqueuing window ${windowId} for opening (queue size: ${this._openingQueue.length})`);
         this._openingQueue.push({ windowId, callback });
         if (!this._processingQueue) {
-            this._processOpeningQueue();
+            this._processOpeningQueue().catch(e => {
+                Logger.error(`Opening queue failed: ${e}\n${e.stack}`);
+                this._processingQueue = false;
+            });
         }
     }
     
@@ -1802,7 +1805,8 @@ export const TilingManager = GObject.registerClass({
                     if (isRef || isReferenceEdgeTiled) {
                         if (!this._windowingManager.isExcluded(window) && !this._windowingManager.isMaximizedOrFullscreen(window)) {
                             Logger.log(`Expelling non-edge-tiled window ${window.get_id()} (RefEdgeTiled=${isReferenceEdgeTiled}, IsRef=${isRef})`);
-                            this._windowingManager.moveOversizedWindow(window);
+                            this._windowingManager.moveOversizedWindow(window).catch(e =>
+                                Logger.error(`Overflow expel failed for ${window.get_id()}: ${e}`));
                         }
                     }
                 }
@@ -1911,7 +1915,8 @@ export const TilingManager = GObject.registerClass({
                      // Only try resize if we haven't already (to avoid loops)
                      if (!WindowState.get(reference_meta_window, 'isSmartResizing')) {
                          Logger.log(`Triggering Smart Resize for returning sacred window`);
-                         this.tryFitWithResize(reference_meta_window, realExisting, workArea);
+                         this.tryFitWithResize(reference_meta_window, realExisting, workArea).catch(e =>
+                             Logger.error(`Smart resize failed for sacred window: ${e}`));
                          return { overflow: false, layout: null }; // Return early to let async resize handle it
                      }
                 }
@@ -1924,7 +1929,8 @@ export const TilingManager = GObject.registerClass({
                         break;
                     }
                 }
-                this._windowingManager.moveOversizedWindow(reference_meta_window);
+                this._windowingManager.moveOversizedWindow(reference_meta_window).catch(e =>
+                    Logger.error(`Overflow move failed for ref window: ${e}`));
                 tile_info = this._tile(_windows, tileArea);
             }
         }

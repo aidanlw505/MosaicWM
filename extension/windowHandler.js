@@ -261,7 +261,8 @@ export const WindowHandler = GObject.registerClass({
                             if (workspaceWindows.length > 1) {
                                 Logger.log(`Window ${win.get_id()} maximized in occupied workspace - isolating (SACRED)`);
                                 WindowState.set(win, 'sacredOriginWorkspace', workspace.index());
-                                this.windowingManager.moveOversizedWindow(win);
+                                this.windowingManager.moveOversizedWindow(win).catch(e =>
+                                    Logger.error(`Sacred maximize isolation failed: ${e}`));
                             }
                         }
                     } else {
@@ -288,7 +289,8 @@ export const WindowHandler = GObject.registerClass({
                          Logger.log(`Window ${win.get_id()} entered FULLSCREEN in occupied workspace - isolating (SACRED)`);
                          // Save origin for restoration later
                          WindowState.set(win, 'sacredOriginWorkspace', workspace.index());
-                         this.windowingManager.moveOversizedWindow(win);
+                         this.windowingManager.moveOversizedWindow(win).catch(e =>
+                             Logger.error(`Sacred fullscreen isolation failed: ${e}`));
                      }
                  }
             } else {
@@ -508,7 +510,8 @@ export const WindowHandler = GObject.registerClass({
                             if (attempts >= MAX_ATTEMPTS) {
                                 Logger.log('Re-include: Smart resize failed - moving to overflow');
                                 WindowState.set(window, 'isSmartResizing', false);
-                                this.windowingManager.moveOversizedWindow(window);
+                                this.windowingManager.moveOversizedWindow(window).catch(e =>
+                                    Logger.error(`Re-include overflow failed: ${e}`));
                                 return GLib.SOURCE_REMOVE;
                             }
 
@@ -520,9 +523,10 @@ export const WindowHandler = GObject.registerClass({
                         this._timeoutRegistry.add(POLL_INTERVAL, () => pollForFit(), 'windowHandler_pollForFit');
                     } else {
                         Logger.log(`Re-include: Smart resize not applicable - moving to overflow`);
-                        this.windowingManager.moveOversizedWindow(window);
+                        this.windowingManager.moveOversizedWindow(window).catch(e =>
+                            Logger.error(`Re-include overflow failed: ${e}`));
                     }
-                })();
+                })().catch(e => Logger.error(`Re-include async resize failed: ${e}`));
 
                 return GLib.SOURCE_REMOVE;
             });
@@ -618,7 +622,10 @@ export const WindowHandler = GObject.registerClass({
         Logger.log(`Enqueueing window ${window.get_id()} for evaluation`);
         this._evaluationQueue.push({ window, workspace, monitor });
         if (!this._isEvaluatingQueue) {
-            this._processEvaluationQueue();
+            this._processEvaluationQueue().catch(e => {
+                Logger.error(`Evaluation queue failed: ${e}\n${e.stack}`);
+                this._isEvaluatingQueue = false;
+            });
         }
     }
 
@@ -889,7 +896,8 @@ export const WindowHandler = GObject.registerClass({
                         Logger.log('Opened sacred (Max/Full) in occupied workspace - isolating (SACRED)');
                         // Save origin for restoration later
                         WindowState.set(window, 'sacredOriginWorkspace', workspace.index());
-                        this.windowingManager.moveOversizedWindow(window);
+                        this.windowingManager.moveOversizedWindow(window).catch(e =>
+                            Logger.error(`Sacred open isolation failed: ${e}`));
                         return GLib.SOURCE_REMOVE;
                     } else {
                         Logger.log('Sacred window in empty workspace - keeping here');
@@ -1282,7 +1290,8 @@ export const WindowHandler = GObject.registerClass({
             if (hasSacredInDest) {
                 Logger.log(`Manual move BLOCKED: Destination workspace has sacred window - moving to overflow`);
                 WindowState.set(window, 'overflowMoveTimestamp', Date.now());
-                this.windowingManager.moveOversizedWindow(window);
+                this.windowingManager.moveOversizedWindow(window).catch(e =>
+                    Logger.error(`Sacred protection overflow failed: ${e}`));
                 return GLib.SOURCE_REMOVE;
             }
 
@@ -1330,7 +1339,8 @@ export const WindowHandler = GObject.registerClass({
                         if (hasEdgeTiles) {
                             Logger.log('DnD arrival: Edge tiling detected - moving to new workspace (TRACE: OVERFLOW)');
                             WindowState.set(window, 'overflowMoveTimestamp', Date.now());
-                            this.windowingManager.moveOversizedWindow(window);
+                            this.windowingManager.moveOversizedWindow(window).catch(e =>
+                                Logger.error(`DnD edge-tile overflow failed: ${e}`));
                         } else {
                             Logger.log('DnD arrival: Pure Mosaic mode - forcing tile');
                             afterWorkspaceSwitch(() => {
@@ -1340,7 +1350,7 @@ export const WindowHandler = GObject.registerClass({
                             }, this._timeoutRegistry);
                         }
                     }
-                })();
+                })().catch(e => Logger.error(`DnD async resize failed: ${e}`));
             } else {
                 Logger.log('Manual move: window fits - tiling workspace');
                 afterWorkspaceSwitch(() => {
@@ -1458,7 +1468,8 @@ export const WindowHandler = GObject.registerClass({
                         Logger.log('Overflow detected but window is solo - suppressing move (failsafe)');
                     } else {
                         Logger.log('Still overflow after protection - triggering manual move');
-                        this._ext.windowingManager.moveOversizedWindow(WINDOW);
+                        this._ext.windowingManager.moveOversizedWindow(WINDOW).catch(e =>
+                            Logger.error(`Post-protection overflow failed: ${e}`));
                     }
                 }
                 return GLib.SOURCE_REMOVE;
@@ -1564,7 +1575,8 @@ export const WindowHandler = GObject.registerClass({
                 if (!processed) {
                     // Force overflow if it really doesn't fit
                     Logger.log(`waitForFit: Still doesn't fit - moving to overflow`);
-                    this.windowingManager.moveOversizedWindow(window);
+                    this.windowingManager.moveOversizedWindow(window).catch(e =>
+                        Logger.error(`waitForFit overflow failed: ${e}`));
                     cleanup();
                 }
             }
