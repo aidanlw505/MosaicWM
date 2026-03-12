@@ -42,6 +42,16 @@ export class TimeoutRegistry {
         return registryId;
     }
 
+    addIdle(callback, name = 'unnamed', priority = GLib.PRIORITY_DEFAULT) {
+        const registryId = this._nextId++;
+        const sourceId = GLib.idle_add(priority, () => {
+            this._timeouts.delete(registryId);
+            return callback();
+        });
+        this._timeouts.set(registryId, { sourceId, name });
+        return registryId;
+    }
+
     addSeconds(seconds, callback, name = 'unnamed') {
         const registryId = this._nextId++;
         const sourceId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, () => {
@@ -201,20 +211,6 @@ export function afterWindowClose(callback, registry) {
     
     const duration = FALLBACK_ANIMATION_MS * getSlowDownFactor();
     registry.add(duration + 50, () => {
-        callback();
-        return GLib.SOURCE_REMOVE;
-    });
-}
-
-export function queueIdle(callback) {
-    return GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-        callback();
-        return GLib.SOURCE_REMOVE;
-    });
-}
-
-export function queueHighPriority(callback) {
-    return GLib.idle_add(GLib.PRIORITY_HIGH, () => {
         callback();
         return GLib.SOURCE_REMOVE;
     });

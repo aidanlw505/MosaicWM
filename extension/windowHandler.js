@@ -244,7 +244,7 @@ export const WindowHandler = GObject.registerClass({
             ids.push(window.connect(signal, (win) => {
                 if (pendingMaximizeCheck) return;
                 pendingMaximizeCheck = true;
-                GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                this._timeoutRegistry.addIdle(() => {
                     pendingMaximizeCheck = false;
                     if (!win.get_compositor_private()) return GLib.SOURCE_REMOVE;
 
@@ -439,7 +439,7 @@ export const WindowHandler = GObject.registerClass({
             const freedWidth = frame.width;
             const freedHeight = frame.height;
 
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            this._timeoutRegistry.add(100, () => {
                 const remainingWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor)
                     .filter(w => w.get_id() !== windowId && !this.windowingManager.isExcluded(w));
 
@@ -452,12 +452,12 @@ export const WindowHandler = GObject.registerClass({
 
                 this.tilingManager.tileWorkspaceWindows(workspace, null, monitor, false);
                 return GLib.SOURCE_REMOVE;
-            });
+            }, 'windowHandler_excludeRetile');
         } else {
             // Window became included - treat like new window arrival with smart resize
             Logger.log(`Window ${windowId} became included - treating as new window arrival`);
 
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            this._timeoutRegistry.add(100, () => {
                 const workArea = this.edgeTilingManager.calculateRemainingSpace(workspace, monitor);
                 if (!workArea) {
                     Logger.log('WindowHandler: Skipped include - invalid workArea');
@@ -517,7 +517,7 @@ export const WindowHandler = GObject.registerClass({
                             return GLib.SOURCE_CONTINUE;
                         };
 
-                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, POLL_INTERVAL, () => pollForFit());
+                        this._timeoutRegistry.add(POLL_INTERVAL, () => pollForFit(), 'windowHandler_pollForFit');
                     } else {
                         Logger.log(`Re-include: Smart resize not applicable - moving to overflow`);
                         this.windowingManager.moveOversizedWindow(window);
@@ -542,7 +542,7 @@ export const WindowHandler = GObject.registerClass({
 
         const debounceId = WindowState.get(window, 'workspaceChangeDebounceId');
         if (debounceId) {
-             GLib.source_remove(debounceId);
+             this._timeoutRegistry.remove(debounceId);
              WindowState.remove(window, 'workspaceChangeDebounceId');
         }
 
@@ -613,8 +613,7 @@ export const WindowHandler = GObject.registerClass({
         }
     }
 
-    // Unified logic to ensure a new window fits, using smart resize if needed.
-    // Handles rapid-fire spawning through the Producer-Consumer evaluationQueue pattern.
+    // Ensures a new window fits via smart resize, queued to handle rapid spawns.
     enqueueWindowForEvaluation(window, workspace, monitor) {
         Logger.log(`Enqueueing window ${window.get_id()} for evaluation`);
         this._evaluationQueue.push({ window, workspace, monitor });
@@ -936,11 +935,11 @@ export const WindowHandler = GObject.registerClass({
                 processed = true;
 
                 if (signalId) actor.disconnect(signalId);
-                if (timeoutId) GLib.source_remove(timeoutId);
+                if (timeoutId) this._timeoutRegistry.remove(timeoutId);
 
                 if (processWindowCallback() === GLib.SOURCE_CONTINUE) {
                     // One small safety polling if initial callback failed (rare)
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.WINDOW_VALIDITY_CHECK_INTERVAL_MS, processWindowCallback);
+                    this._timeoutRegistry.add(constants.WINDOW_VALIDITY_CHECK_INTERVAL_MS, processWindowCallback, 'windowHandler_safetyPoll');
                 }
 
                 // Now that window is processed, connect standard signals
@@ -958,20 +957,20 @@ export const WindowHandler = GObject.registerClass({
             }
 
             // Safety timeout
-            timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => {
+            timeoutId = this._timeoutRegistry.add(400, () => {
                 // Pre-flight check: If the actor was disposed while waiting, abort safely.
                 if (!window.get_compositor_private()) {
                     Logger.log('window map timeout - window already disposed, aborting process');
                     return GLib.SOURCE_REMOVE;
                 }
-                
+
                 Logger.log('window map timeout - falling back to immediate processing');
                 processOnce();
                 return GLib.SOURCE_REMOVE;
-            });
+            }, 'windowHandler_mapSafety');
         } else {
             // Fallback for non-actor windows (rare in Shell)
-            const fallbackId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.WINDOW_VALIDITY_CHECK_INTERVAL_MS, () => {
+            this._timeoutRegistry.add(constants.WINDOW_VALIDITY_CHECK_INTERVAL_MS, () => {
                  // Abort if window is gone (destroyed or unmanaged)
                  if (!window.get_compositor_private() || !window.get_workspace()) {
                      Logger.log(`onWindowCreated fallback: window gone - aborting`);
@@ -982,7 +981,7 @@ export const WindowHandler = GObject.registerClass({
                      return GLib.SOURCE_REMOVE;
                  }
                  return GLib.SOURCE_CONTINUE;
-            });
+            }, 'windowHandler_fallbackCreated');
         }
     }
 
@@ -1009,7 +1008,7 @@ export const WindowHandler = GObject.registerClass({
         // Mark window as newly added for overflow protection logic
         WindowState.set(window, 'addedTime', Date.now());
 
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.WINDOW_VALIDITY_CHECK_INTERVAL_MS, () => {
+        this._timeoutRegistry.add(constants.WINDOW_VALIDITY_CHECK_INTERVAL_MS, () => {
             // Abort if window is gone (destroyed or unmanaged)
             if (!window.get_compositor_private() || !window.get_workspace()) {
                 Logger.log(`window-added: window ${window.get_id()} gone - aborting`);
@@ -1059,10 +1058,10 @@ export const WindowHandler = GObject.registerClass({
                     // Mark window as waiting for geometry - prevents premature overflow
                     WindowState.set(WINDOW, 'waitingForGeometry', true);
 
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.GEOMETRY_CHECK_DELAY_MS, () => {
+                    this._timeoutRegistry.add(constants.GEOMETRY_CHECK_DELAY_MS, () => {
                         this.waitForGeometry(WINDOW, WORKSPACE, MONITOR);
                         return GLib.SOURCE_REMOVE;
-                    });
+                    }, 'windowHandler_geometryCheck');
 
                     return GLib.SOURCE_REMOVE;
                 }
@@ -1101,7 +1100,7 @@ export const WindowHandler = GObject.registerClass({
             Logger.log(`_windowRemoved: Window still exists (DnD move) - keeping preferred size`);
         }
 
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.WINDOW_VALIDITY_CHECK_INTERVAL_MS, () => {
+        this._timeoutRegistry.add(constants.WINDOW_VALIDITY_CHECK_INTERVAL_MS, () => {
             const WORKSPACE = workspace;
             const MONITOR = removedMonitor;
 
@@ -1135,7 +1134,7 @@ export const WindowHandler = GObject.registerClass({
                     const restored = this._ext.tilingManager.tryRestoreWindowSizes(remainingWindows, workArea, null, null, WORKSPACE, MONITOR);
 
                     if (restored) {
-                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.RESIZE_SETTLE_DELAY_MS, () => {
+                        this._timeoutRegistry.add(constants.RESIZE_SETTLE_DELAY_MS, () => {
                             Logger.log('Retiling after restore delay');
                             // Ensure flags are cleared after settlement
                             for (const w of remainingWindows) {
@@ -1143,7 +1142,7 @@ export const WindowHandler = GObject.registerClass({
                             }
                             this._ext.tilingManager.tileWorkspaceWindows(WORKSPACE, null, MONITOR, true);
                             return GLib.SOURCE_REMOVE;
-                        });
+                        }, 'windowHandler_restoreSettle');
                     } else {
                         this._ext.tilingManager.tileWorkspaceWindows(WORKSPACE, null, MONITOR, true);
                     }
@@ -1183,7 +1182,7 @@ export const WindowHandler = GObject.registerClass({
         const existingDebounceId = WindowState.get(window, 'workspaceChangeDebounceId');
         if (existingDebounceId) {
             Logger.log('Clearing previous debounce timeout');
-            GLib.source_remove(existingDebounceId);
+            this._timeoutRegistry.remove(existingDebounceId);
             WindowState.remove(window, 'workspaceChangeDebounceId');
         }
 
@@ -1197,7 +1196,7 @@ export const WindowHandler = GObject.registerClass({
             return;
         }
 
-        const timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.DEBOUNCE_DELAY_MS, () => {
+        const timeoutId = this._timeoutRegistry.add(constants.DEBOUNCE_DELAY_MS, () => {
             WindowState.remove(window, 'workspaceChangeDebounceId');
 
             // Guard: Skip if window was recently moved due to overflow (prevents infinite loop)
@@ -1388,7 +1387,7 @@ export const WindowHandler = GObject.registerClass({
                 this.connectWindowSignals(WINDOW);
                 this._ext.tilingManager.calculateLayoutsOnly();
 
-                GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                this._timeoutRegistry.addIdle(() => {
                     try {
                         if (Main.overview.visible) {
                             const overview = Main.overview._overview;
@@ -1398,7 +1397,7 @@ export const WindowHandler = GObject.registerClass({
                         }
                     } catch (e) {}
                     return GLib.SOURCE_REMOVE;
-                });
+                }, 'windowHandler_overviewRelayout', GLib.PRIORITY_DEFAULT_IDLE);
                 return GLib.SOURCE_REMOVE;
             }
 
@@ -1420,7 +1419,7 @@ export const WindowHandler = GObject.registerClass({
                 performTiling();
             }
 
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.RETILE_DELAY_MS, () => {
+            this._timeoutRegistry.add(constants.RETILE_DELAY_MS, () => {
                 if (WindowState.get(WINDOW, 'movedByOverflow')) {
                     Logger.log('Skipping final overflow check - window already moved');
                     return GLib.SOURCE_REMOVE;
@@ -1482,7 +1481,7 @@ export const WindowHandler = GObject.registerClass({
         const cleanup = () => {
             processed = true;
             if (timeoutId) {
-                GLib.source_remove(timeoutId);
+                this._timeoutRegistry.remove(timeoutId);
                 timeoutId = null;
             }
             signalIds.forEach(item => {
@@ -1558,7 +1557,7 @@ export const WindowHandler = GObject.registerClass({
         });
 
         // 2. Safety timeout - if signals never fire or geometry gets stuck
-        timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 800, () => {
+        timeoutId = this._timeoutRegistry.add(800, () => {
             if (!processed) {
                 Logger.log(`waitForFit: Signal timeout - forcing final check`);
                 checkFit();

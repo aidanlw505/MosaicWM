@@ -75,7 +75,7 @@ export const ResizeHandler = GObject.registerClass({
         }
         
         if (this._resizeDebounceTimeout) {
-            GLib.source_remove(this._resizeDebounceTimeout);
+            this._timeoutRegistry.remove(this._resizeDebounceTimeout);
             this._resizeDebounceTimeout = null;
         }
         
@@ -188,11 +188,11 @@ export const ResizeHandler = GObject.registerClass({
                             this.tilingManager.tileWorkspaceWindows(originWS, window, monitor);
                             
                             // Clear unmaximizing flags after a settle period
-                            GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.RESIZE_SETTLE_DELAY_MS, () => {
+                            this._timeoutRegistry.add(constants.RESIZE_SETTLE_DELAY_MS, () => {
                                 WindowState.remove(window, 'unmaximizing');
                                 WindowState.remove(window, 'targetRestoredSize');
                                 return GLib.SOURCE_REMOVE;
-                            });
+                            }, 'resizeHandler_settleRestoreSacred');
                         }, this._timeoutRegistry);
                         
                         this._sizeChanged = false;
@@ -299,13 +299,13 @@ export const ResizeHandler = GObject.registerClass({
                 
                 if (isActiveResize) {
                     if (this._resizeDebounceTimeout) {
-                        GLib.source_remove(this._resizeDebounceTimeout);
+                        this._timeoutRegistry.remove(this._resizeDebounceTimeout);
                         this._resizeDebounceTimeout = null;
                     }
                     
                     // Batch events with 50ms delay to allow overflow detection and
                     // ghost mode feedback during continuous resizing.
-                    this._resizeDebounceTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                    this._resizeDebounceTimeout = this._timeoutRegistry.add(50, () => {
                         this._resizeDebounceTimeout = null;
                         
                         let canFit = this.tilingManager.canFitWindow(window, workspace, monitor);
@@ -435,11 +435,11 @@ export const ResizeHandler = GObject.registerClass({
             
             this.tilingManager.tileWorkspaceWindows(currentWorkspace, window, monitor, true);
             
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.RESIZE_SETTLE_DELAY_MS + 100, () => {
+            this._timeoutRegistry.add(constants.RESIZE_SETTLE_DELAY_MS + 100, () => {
                 WindowState.remove(window, 'unmaximizing');
                 WindowState.remove(window, 'targetRestoredSize');
                 return GLib.SOURCE_REMOVE;
-            });
+            }, 'resizeHandler_settleUnmaximizeSame');
             return;
         }
         
@@ -479,7 +479,7 @@ export const ResizeHandler = GObject.registerClass({
             WindowState.set(window, 'preferredSize', preMaxSize);
         }
 
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+        this._timeoutRegistry.add(50, () => {
             if (!window.get_compositor_private()) return GLib.SOURCE_REMOVE;
 
             const oldWorkspace = currentWorkspace;
@@ -493,12 +493,12 @@ export const ResizeHandler = GObject.registerClass({
                     this.tilingManager.tileWorkspaceWindows(oldWorkspace, null, monitor, true);
                 }
 
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.RESIZE_SETTLE_DELAY_MS, () => {
+                this._timeoutRegistry.add(constants.RESIZE_SETTLE_DELAY_MS, () => {
                     WindowState.remove(window, 'unmaximizing');
                     WindowState.remove(window, 'isConstrainedByMosaic');
                     WindowState.remove(window, 'targetRestoredSize');
                     return GLib.SOURCE_REMOVE;
-                });
+                }, 'resizeHandler_settleUnmaximizeReturn');
             }, this._timeoutRegistry);
             
             return GLib.SOURCE_REMOVE;

@@ -28,6 +28,11 @@ export const AnimationsManager = GObject.registerClass({
         this._animatingWindows = new Set(); // Set of Window IDs (kept for efficiency)
         this._justEndedDrag = false;
         this._resizingWindowId = null;
+        this._timeoutRegistry = null;
+    }
+
+    setTimeoutRegistry(registry) {
+        this._timeoutRegistry = registry;
     }
 
     setResizingWindow(windowId) {
@@ -54,10 +59,10 @@ export const AnimationsManager = GObject.registerClass({
         // If ending drag, set flag for smooth drop animation
         if (this._isDragging && !dragging) {
             this._justEndedDrag = true;
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.DEBOUNCE_DELAY_MS, () => {
+            this._timeoutRegistry.add(constants.DEBOUNCE_DELAY_MS, () => {
                 this._justEndedDrag = false;
                 return GLib.SOURCE_REMOVE;
-            });
+            }, 'animations_dragEndDebounce');
         }
         this._isDragging = dragging;
     }

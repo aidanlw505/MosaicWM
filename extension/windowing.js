@@ -269,14 +269,14 @@ export const WindowingManager = GObject.registerClass({
         window.change_workspace(target_workspace);
         
         // Defer activation to next idle (no artificial delay)
-            GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            this._timeoutRegistry.addIdle(() => {
                 const workspaceIndex = target_workspace.index();
                 if (workspaceIndex < 0 || workspaceIndex >= workspaceManager.get_n_workspaces()) {
                     Logger.warn(`Workspace no longer valid: ${workspaceIndex}`);
                     resolve(target_workspace);
                     return GLib.SOURCE_REMOVE;
                 }
-                
+
                 if (switchFocusToMovedWindow) {
                     target_workspace.activate(global.get_current_time());
                     this.showWorkspaceSwitcher(target_workspace, monitor);
@@ -300,7 +300,7 @@ export const WindowingManager = GObject.registerClass({
                             this._tilingManager.tileWorkspaceWindows(target_workspace, null, monitor);
                             
                             // Check position after tiling
-                            GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                            this._timeoutRegistry.addIdle(() => {
                                 try {
                                     if (!window || !window.get_compositor_private()) {
                                         return;
@@ -325,7 +325,7 @@ export const WindowingManager = GObject.registerClass({
                                     resolve(target_workspace);
                                 }
                                 return GLib.SOURCE_REMOVE;
-                            });
+                            }, 'windowing_positionCheck', GLib.PRIORITY_DEFAULT_IDLE);
                         } catch (e) {
                             Logger.error(`Error during moveOversizedWindow retiling: ${e}`);
                             
@@ -418,7 +418,7 @@ export const WindowingManager = GObject.registerClass({
         if (!condition) return;
 
         // Queue in idle with low priority to let GNOME settle its dynamic workspace states
-        GLib.idle_add(GLib.PRIORITY_LOW, () => {
+        this._timeoutRegistry.addIdle(() => {
             const workspaceManager = global.workspace_manager;
             const currentIndex = workspace.index();
 
@@ -476,7 +476,7 @@ export const WindowingManager = GObject.registerClass({
             }
 
             return GLib.SOURCE_REMOVE;
-        });
+        }, 'windowing_renavigate', GLib.PRIORITY_LOW);
     }
 
     showWorkspaceSwitcher(workspace, monitorIndex = -1) {

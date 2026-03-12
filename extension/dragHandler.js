@@ -95,10 +95,10 @@ export const DragHandler = GObject.registerClass({
                 
                 this.edgeTilingManager.removeTile(window, () => {
                     // Delay clearing the flag to cover the debounce period for overflow detection
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.EDGE_TILE_RESTORE_DELAY_MS, () => {
+                    this._timeoutRegistry.add(constants.EDGE_TILE_RESTORE_DELAY_MS, () => {
                         this._restoringFromEdgeTile = false;
                         return GLib.SOURCE_REMOVE;
-                    });
+                    }, 'dragHandler_edgeTileRestoreDelay');
                     
                     Logger.log(`Edge tiling: restoration complete, checking if drag still active`);
                     this._skipNextTiling = null;
@@ -233,32 +233,32 @@ export const DragHandler = GObject.registerClass({
                     Logger.log(`DnD swap result = ${success}`);
                     
                     if (success) {
-                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.RETILE_DELAY_MS, () => {
+                        this._timeoutRegistry.add(constants.RETILE_DELAY_MS, () => {
                             this._skipNextTiling = null;
                             return GLib.SOURCE_REMOVE;
-                        });
+                        }, 'dragHandler_skipTilingSwap');
                     } else {
                         this._skipNextTiling = null;
                     }
                 } else {
                     Logger.log(`DnD: zone ${this._currentZone} empty, applying tile`);
-                    
+
                     this._skipNextTiling = window.get_id();
-                    
+
                     const success = this.edgeTilingManager.applyTile(window, this._currentZone, workArea);
                     Logger.log(`Edge tiling: apply result = ${success}`);
-                    
+
                     if (success) {
                         // Move ghost windows to overflow after edge tile is applied
                         if (this._edgeTileGhostWindows.length > 0) {
                             Logger.log(`Edge tile confirmed - moving ${this._edgeTileGhostWindows.length} ghost windows to overflow`);
                             this.moveGhostWindowsToOverflow();
                         }
-                        
-                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.RETILE_DELAY_MS, () => {
+
+                        this._timeoutRegistry.add(constants.RETILE_DELAY_MS, () => {
                             this._skipNextTiling = null;
                             return GLib.SOURCE_REMOVE;
-                        });
+                        }, 'dragHandler_skipTilingApply');
                     } else {
                         // Edge tile failed - clear ghosts
                         this.clearGhostWindows();
@@ -389,7 +389,7 @@ export const DragHandler = GObject.registerClass({
         if (this._isPositionProcessing) return;
         this._isPositionProcessing = true;
         
-        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+        this._timeoutRegistry.addIdle(() => {
              if (!this._draggedWindow) {
                  this._isPositionProcessing = false;
                  return GLib.SOURCE_REMOVE;

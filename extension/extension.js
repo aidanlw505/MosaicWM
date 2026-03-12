@@ -198,6 +198,8 @@ export default class WindowMosaicExtension extends Extension {
         this.drawingManager.setEdgeTilingManager(this.edgeTilingManager);
 
         this.edgeTilingManager.setAnimationsManager(this.animationsManager);
+        this.edgeTilingManager.setTimeoutRegistry(this._timeoutRegistry);
+        this.animationsManager.setTimeoutRegistry(this._timeoutRegistry);
 
         // Create handler classes (receive extension reference)
         this.windowHandler = new WindowHandler(this);
@@ -425,7 +427,7 @@ export default class WindowMosaicExtension extends Extension {
         }
 
         if (this._resizeDebounceTimeout) {
-            GLib.source_remove(this._resizeDebounceTimeout);
+            this._timeoutRegistry.remove(this._resizeDebounceTimeout);
             this._resizeDebounceTimeout = null;
         }
         Logger.info("Disabling Mosaic layout manager.");
@@ -497,7 +499,7 @@ export default class WindowMosaicExtension extends Extension {
         });
 
         if (this._workspaceChangeTimeout) {
-            GLib.source_remove(this._workspaceChangeTimeout);
+            this._timeoutRegistry.remove(this._workspaceChangeTimeout);
             this._workspaceChangeTimeout = null;
         }
 

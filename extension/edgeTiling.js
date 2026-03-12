@@ -24,10 +24,15 @@ export const EdgeTilingManager = GObject.registerClass({
         this._activeEdgeTilingWindow = null;
         this._isResizing = false;
         this._animationsManager = null;
+        this._timeoutRegistry = null;
     }
 
     setAnimationsManager(manager) {
         this._animationsManager = manager;
+    }
+
+    setTimeoutRegistry(registry) {
+        this._timeoutRegistry = registry;
     }
 
     isEdgeTilingActive() {
@@ -719,7 +724,7 @@ export const EdgeTilingManager = GObject.registerClass({
 
         window.unmaximize();
 
-        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+        this._timeoutRegistry.addIdle(() => {
             if (this._animationsManager) {
                 this._animationsManager.animateWindow(window, rect, { subtle: true });
             } else {
@@ -781,7 +786,7 @@ export const EdgeTilingManager = GObject.registerClass({
                     this.emit('edge-tiling-changed', fullToQuarterConversion.window, fullToQuarterConversion.newZone);
                 }
 
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.POLL_INTERVAL_MS, () => {
+            this._timeoutRegistry.add(constants.POLL_INTERVAL_MS, () => {
                     // Safety check: ensure windows are still valid
                     if (!window.get_compositor_private() ||
                         !fullToQuarterConversion.window.get_compositor_private()) {
@@ -943,10 +948,10 @@ export const EdgeTilingManager = GObject.registerClass({
         window.move_resize_frame(false, restoredX, restoredY, finalWidth, finalHeight);
 
         if (callback) {
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.RETILE_DELAY_MS, () => {
+            this._timeoutRegistry.add(constants.RETILE_DELAY_MS, () => {
                 callback();
                 return GLib.SOURCE_REMOVE;
-            });
+            }, 'edgeTiling_removeTileCallback');
         }
     }
 
@@ -979,12 +984,12 @@ export const EdgeTilingManager = GObject.registerClass({
                 mosaicWindow.change_workspace(newWorkspace);
             }
 
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.REVERSE_RESIZE_PROTECTION_MS, () => {
+            this._timeoutRegistry.add(constants.REVERSE_RESIZE_PROTECTION_MS, () => {
                 if (this._tilingManager) {
                     this._tilingManager.tileWorkspaceWindows(workspace, null, monitor);
                 }
                 return GLib.SOURCE_REMOVE;
-            });
+            }, 'edgeTiling_bothSidesRetile');
 
             newWorkspace.activate(global.get_current_time());
             this._windowingManager.showWorkspaceSwitcher(newWorkspace, monitor);
@@ -1002,13 +1007,13 @@ export const EdgeTilingManager = GObject.registerClass({
 
                 Logger.log(`_handleMosaicOverflow: auto-tiling single window ${mosaicWindow.get_id()} to opposite zone ${oppositeZone}`);
 
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                this._timeoutRegistry.add(100, () => {
                     this.applyTile(mosaicWindow, oppositeZone, workArea);
 
                     this.registerAutoTileDependency(mosaicWindow, tiledWindow);
 
                     return GLib.SOURCE_REMOVE;
-                });
+                }, 'edgeTiling_autoTileOpposite');
                 return;
             }
         }
@@ -1036,12 +1041,12 @@ export const EdgeTilingManager = GObject.registerClass({
                 mosaicWindow.change_workspace(newWorkspace);
             }
 
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.REVERSE_RESIZE_PROTECTION_MS, () => {
+            this._timeoutRegistry.add(constants.REVERSE_RESIZE_PROTECTION_MS, () => {
                 if (this._tilingManager) {
                     this._tilingManager.tileWorkspaceWindows(workspace, null, monitor);
                 }
                 return GLib.SOURCE_REMOVE;
-            });
+            }, 'edgeTiling_overflowRetile');
 
             newWorkspace.activate(global.get_current_time());
             this._windowingManager.showWorkspaceSwitcher(newWorkspace, monitor);
@@ -1157,10 +1162,10 @@ export const EdgeTilingManager = GObject.registerClass({
                 WindowState.set(window, 'edgePreviousSize', { width: resizedFrame.width, height: resizedFrame.height, y: resizedY });
             }
         } finally {
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.ISRESIZING_FLAG_RESET_MS, () => {
+            this._timeoutRegistry.add(constants.ISRESIZING_FLAG_RESET_MS, () => {
                 this._isResizing = false;
                 return GLib.SOURCE_REMOVE;
-            });
+            }, 'edgeTiling_isResizingReset');
         }
     }
 
@@ -1210,17 +1215,15 @@ export const EdgeTilingManager = GObject.registerClass({
                 WindowState.set(resizedWindow, 'edgePreviousSize', { width: resizedFrame.width, height: workArea.height, x: workArea.x + newAdjacentWidth });
             }
         } finally {
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.ISRESIZING_FLAG_RESET_MS, () => {
+            this._timeoutRegistry.add(constants.ISRESIZING_FLAG_RESET_MS, () => {
                 this._isResizing = false;
                 return GLib.SOURCE_REMOVE;
-            });
+            }, 'edgeTiling_isResizingReset');
         }
     }
 
     _handleResizeWithMosaic(window, workspace, monitor) {
-        // During resize: just retile mosaic to use remaining space
-        // The edge tile and mosaic "fight" for space dynamically
-        // Constraint (min 400px for mosaic) is enforced in fixMosaicAfterEdgeResize on grab-op-end
+        // Retile mosaic to adapt to the edge tile's new size
         if (this._tilingManager) {
             Logger.log(`Edge-tiled window resizing - retiling mosaic to adapt`);
             this._tilingManager.tileWorkspaceWindows(workspace, null, monitor, true);
@@ -1268,10 +1271,10 @@ export const EdgeTilingManager = GObject.registerClass({
                     resizedWindow.move_resize_frame(false, workArea.x + newAdjacentWidth, workArea.y, newResizedWidth, workArea.height);
                 }
             } finally {
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                this._timeoutRegistry.add(100, () => {
                     this._isResizing = false;
                     return GLib.SOURCE_REMOVE;
-                });
+                }, 'edgeTiling_isResizingReset');
             }
             return;
         }
@@ -1300,10 +1303,10 @@ export const EdgeTilingManager = GObject.registerClass({
                     resizedWindow.move_resize_frame(false, workArea.x + adjacentFrame.width, workArea.y, newResizedWidth, workArea.height);
                 }
             } finally {
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                this._timeoutRegistry.add(100, () => {
                     this._isResizing = false;
                     return GLib.SOURCE_REMOVE;
-                });
+                }, 'edgeTiling_isResizingReset');
             }
         }
     }
@@ -1328,10 +1331,10 @@ export const EdgeTilingManager = GObject.registerClass({
                     const x = isLeft ? workArea.x : (workArea.x + workArea.width - maxWidth);
                     edgeTiledWindow.move_resize_frame(false, x, workArea.y, maxWidth, workArea.height);
                 } finally {
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                    this._timeoutRegistry.add(50, () => {
                         this._isResizing = false;
                         return GLib.SOURCE_REMOVE;
-                    });
+                    }, 'edgeTiling_isResizingReset');
                 }
             }
             return;
@@ -1377,20 +1380,20 @@ export const EdgeTilingManager = GObject.registerClass({
                     edgeTiledWindow.move_resize_frame(false, newX, workArea.y, maxEdgeWidth, workArea.height);
                 }
             } finally {
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                this._timeoutRegistry.add(50, () => {
                     this._isResizing = false;
                     return GLib.SOURCE_REMOVE;
-                });
+                }, 'edgeTiling_isResizingReset');
             }
         }
 
         // Always retile mosaic to adapt to new available space
         if (this._tilingManager) {
             Logger.log(`Retiling mosaic after edge tile resize`);
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            this._timeoutRegistry.add(100, () => {
                 this._tilingManager.tileWorkspaceWindows(workspace, null, monitor, true);
                 return GLib.SOURCE_REMOVE;
-            });
+            }, 'edgeTiling_retileMosaic');
         }
     }
 
@@ -1433,10 +1436,10 @@ export const EdgeTilingManager = GObject.registerClass({
                     resizedWindow.move_resize_frame(false, resizedFrame.x, resizedY, resizedFrame.width, newResizedHeight);
                 }
             } finally {
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                this._timeoutRegistry.add(100, () => {
                     this._isResizing = false;
                     return GLib.SOURCE_REMOVE;
-                });
+                }, 'edgeTiling_isResizingReset');
             }
             return;
         }
@@ -1466,10 +1469,10 @@ export const EdgeTilingManager = GObject.registerClass({
                     resizedWindow.move_resize_frame(false, resizedFrame.x, resizedY, resizedFrame.width, newResizedHeight);
                 }
             } finally {
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                this._timeoutRegistry.add(100, () => {
                     this._isResizing = false;
                     return GLib.SOURCE_REMOVE;
-                });
+                }, 'edgeTiling_isResizingReset');
             }
         }
     }
