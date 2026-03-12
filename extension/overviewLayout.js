@@ -48,7 +48,7 @@ export class MosaicLayoutStrategy extends Workspace.LayoutStrategy {
 
         // --- VIEWPORT MIRROR ---
         const monitor = this.monitor || this._monitor;
-        const monitorIndex = monitor ? monitor.index : 0;
+        const monitorIndex = monitor ? monitor.index : global.display.get_primary_monitor();
         const workArea = workspace.get_work_area_for_monitor(monitorIndex);
 
         if (!workArea || workArea.width <= 0 || workArea.height <= 0) {

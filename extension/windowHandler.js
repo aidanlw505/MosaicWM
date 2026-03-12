@@ -553,7 +553,7 @@ export const WindowHandler = GObject.registerClass({
             return;
         }
 
-        if (monitor === global.display.get_primary_monitor() && windowWorkspace) {
+        if (windowWorkspace) {
             const workspace = windowWorkspace;
 
             // Capture destroyed window size for reverse smart resize
@@ -603,14 +603,12 @@ export const WindowHandler = GObject.registerClass({
 
     onOverviewHidden() {
         const workspace = this.windowingManager.getWorkspace();
-        const monitor = global.display.get_primary_monitor();
-        const windows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor);
 
-        for (const win of windows) {
+        for (const win of workspace.list_windows()) {
             if (WindowState.get(win, 'deferTilingUntilOverviewHidden')) {
                 Logger.log(`Overview hidden: Tiling deferred window ${win.get_id()}`);
                 WindowState.remove(win, 'deferTilingUntilOverviewHidden');
-                this.enqueueWindowForEvaluation(win, workspace, monitor);
+                this.enqueueWindowForEvaluation(win, workspace, win.get_monitor());
             }
         }
     }
@@ -1020,7 +1018,7 @@ export const WindowHandler = GObject.registerClass({
 
             const WORKSPACE = window.get_workspace();
             const WINDOW = window;
-            const MONITOR = global.display.get_primary_monitor();
+            const MONITOR = WINDOW.get_monitor();
 
             if (this._ext.tilingManager.checkValidity(MONITOR, WORKSPACE, WINDOW, false)) {
 
@@ -1093,6 +1091,9 @@ export const WindowHandler = GObject.registerClass({
         const freedWidth = removedFrame.width;
         const freedHeight = removedFrame.height;
 
+        // Capture monitor at event time (window may move monitors during DnD)
+        const removedMonitor = window.get_monitor();
+
         const actor = window.get_compositor_private();
         if (!actor) {
             this._ext.tilingManager.clearPreferredSize(window);
@@ -1102,7 +1103,7 @@ export const WindowHandler = GObject.registerClass({
 
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.WINDOW_VALIDITY_CHECK_INTERVAL_MS, () => {
             const WORKSPACE = workspace;
-            const MONITOR = global.display.get_primary_monitor();
+            const MONITOR = removedMonitor;
 
             // Check if workspace still exists and has windows
             if (!WORKSPACE || WORKSPACE.index() < 0) {

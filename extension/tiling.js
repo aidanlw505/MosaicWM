@@ -2360,11 +2360,13 @@ export const TilingManager = GObject.registerClass({
         const workspace = targetWorkspace || global.workspace_manager.get_active_workspace();
         
         // Handle monitor index or object
-        let monitorIndex = 0;
+        let monitorIndex = global.display.get_primary_monitor();
         if (targetMonitor !== null && targetMonitor !== undefined) {
              monitorIndex = typeof targetMonitor === 'number' ? targetMonitor : targetMonitor.index;
         } else {
-             monitorIndex = global.display.get_focus_window()?.get_monitor() || 0;
+             const focusMon = global.display.get_focus_window()?.get_monitor();
+             if (focusMon !== undefined && focusMon !== null)
+                 monitorIndex = focusMon;
         }
         
         // Pass excludeFromTiling=false to ensure we consider the new window
