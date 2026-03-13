@@ -564,6 +564,7 @@ export const TilingManager = GObject.registerClass({
         this.masks = [];
         this.working_windows = [];
         this.tmp_swap = [];
+        this.tmp_reorder = null;
         this.isDragging = false;
         this.dragRemainingSpace = null;
         
@@ -730,6 +731,7 @@ export const TilingManager = GObject.registerClass({
     disableDragMode() {
         this.isDragging = false;
         this.dragRemainingSpace = null;
+        this.invalidateLayoutCache();
     }
 
     setDragRemainingSpace(space) {
@@ -758,7 +760,129 @@ export const TilingManager = GObject.registerClass({
     getCachedLayout() {
         return this._cachedTileResult?.windows || null;
     }
-    
+
+    // Extract per-window positions from tile_info levels
+    _extractLayoutPositions(tile_info, work_area) {
+        const positions = [];
+
+        if (!tile_info.vertical) {
+            let y = tile_info.y;
+            for (const level of tile_info.levels) {
+                let x = level.x;
+                for (const win of level.windows) {
+                    let center_offset = (work_area.height / 2 + work_area.y) - (y + win.height / 2);
+                    let y_offset = 0;
+                    if (center_offset > 0)
+                        y_offset = Math.min(center_offset, level.height - win.height);
+
+                    positions.push({ id: win.id, x: x, y: y + y_offset, width: win.width, height: win.height });
+                    x += win.width + constants.WINDOW_SPACING;
+                }
+                y += level.height + constants.WINDOW_SPACING;
+            }
+        } else {
+            let x = tile_info.x;
+            for (const level of tile_info.levels) {
+                let y = level.y;
+                for (const win of level.windows) {
+                    const drawX = win.targetX !== undefined ? win.targetX : x;
+                    const drawY = win.targetY !== undefined ? win.targetY : y;
+
+                    positions.push({ id: win.id, x: drawX, y: drawY, width: win.width, height: win.height });
+                    y += win.height + constants.WINDOW_SPACING;
+                }
+                x += level.width + constants.WINDOW_SPACING;
+            }
+        }
+
+        return positions;
+    }
+
+    // Pre-compute all valid mosaic layouts for a drag session
+    computeDragLayouts(windowDescriptors, workArea, draggedId) {
+        const spacing = constants.WINDOW_SPACING;
+
+        let maxHeight = 0, maxWidth = 0;
+        for (const w of windowDescriptors) {
+            maxHeight = Math.max(maxHeight, w.height);
+            maxWidth = Math.max(maxWidth, w.width);
+        }
+        const isNarrow = workArea.width < workArea.height;
+        const tooWide = maxWidth > workArea.width * 0.9;
+        const tooTall = maxHeight > workArea.height * 0.65;
+        const useVertical = tooTall || isNarrow || tooWide;
+        const tilingFn = useVertical ? this._verticalShelves : this._horizontalShelves;
+
+        const perms = this._generatePermutations(windowDescriptors);
+        const layouts = [];
+        const seenPositions = new Set();
+
+        for (const perm of perms) {
+            const result = tilingFn.call(this, perm, workArea, spacing);
+            if (result.overflow) continue;
+
+            const positions = this._extractLayoutPositions(result, workArea);
+            const draggedPos = positions.find(p => p.id === draggedId);
+            if (!draggedPos) continue;
+
+            // De-duplicate by 50px grid snap
+            const snapKey = `${Math.round(draggedPos.x / 50)},${Math.round(draggedPos.y / 50)}`;
+            if (seenPositions.has(snapKey)) continue;
+            seenPositions.add(snapKey);
+
+            layouts.push({
+                draggedRect: draggedPos,
+                positions: positions,
+                permOrder: perm.map(w => w.id)
+            });
+        }
+
+        Logger.log(`computeDragLayouts: ${perms.length} permutations → ${layouts.length} unique positions for window ${draggedId}`);
+        return layouts;
+    }
+
+    // Apply a pre-computed layout during drag
+    applyDragLayout(positions, workspace, monitor) {
+        const meta_windows = this._windowingManager.getMonitorWorkspaceWindows(workspace, monitor);
+
+        if (this._drawingManager) {
+            this._drawingManager.removeBoxes();
+        }
+
+        for (const pos of positions) {
+            const isMask = this.masks[pos.id];
+
+            if (isMask) {
+                if (this._drawingManager) {
+                    this._drawingManager.rect(pos.x, pos.y, pos.width, pos.height);
+                }
+            } else {
+                const window = meta_windows.find(w => w.get_id() === pos.id);
+                if (!window) continue;
+
+                const currentRect = window.get_frame_rect();
+                const posChanged = Math.abs(currentRect.x - pos.x) > 5 || Math.abs(currentRect.y - pos.y) > 5;
+                const sizeChanged = Math.abs(currentRect.width - pos.width) > 5 || Math.abs(currentRect.height - pos.height) > 5;
+
+                if (posChanged || sizeChanged) {
+                    WindowState.set(window, 'isConstrainedByMosaic', true);
+                    window.move_resize_frame(false, pos.x, pos.y, pos.width, pos.height);
+                    const actor = window.get_compositor_private();
+                    if (actor) {
+                        actor.set_translation(currentRect.x - pos.x, currentRect.y - pos.y, 0);
+                        actor.ease({
+                            translation_x: 0,
+                            translation_y: 0,
+                            opacity: 255,
+                            duration: constants.ANIMATION_DURATION_MS,
+                            mode: Clutter.AnimationMode.EASE_OUT_QUAD
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     // Queue a window opening operation to prevent race conditions
     // The callback will be called when it's this window's turn. Supports async callbacks.
     enqueueWindowOpen(windowId, callback) {
@@ -827,14 +951,61 @@ export const TilingManager = GObject.registerClass({
     }
 
     applySwaps(workspace, array) {
-        if(workspace.swaps)
-            for(let swap of workspace.swaps)
-                this._swapElements(array, swap[0], swap[1]);
+        if(workspace.swaps) {
+            const getId = w => w.id !== undefined ? w.id : w.get_id();
+            for(let op of workspace.swaps) {
+                if (Array.isArray(op) && op[0] === 'move') {
+                    this._moveElement(array, op[1], op[2]);
+                } else if (Array.isArray(op) && op[0] === 'order') {
+                    const order = op[1];
+                    array.sort((a, b) => {
+                        const idxA = order.indexOf(getId(a));
+                        const idxB = order.indexOf(getId(b));
+                        return (idxA === -1 ? Infinity : idxA) - (idxB === -1 ? Infinity : idxB);
+                    });
+                } else {
+                    this._swapElements(array, op[0], op[1]);
+                }
+            }
+        }
     }
 
     applyTmp(array) {
-        if(this.tmp_swap.length !== 0) {
+        if (this.tmp_reorder) {
+            this._moveElement(array, this.tmp_reorder.draggedId, this.tmp_reorder.targetId);
+        } else if(this.tmp_swap.length !== 0) {
             this._swapElements(array, this.tmp_swap[0], this.tmp_swap[1]);
+        }
+    }
+
+    setTmpReorder(draggedId, targetId) {
+        if (draggedId === targetId) return;
+        this.tmp_reorder = { draggedId, targetId };
+    }
+
+    clearTmpReorder() {
+        this.tmp_reorder = null;
+    }
+
+    applyTmpReorder(workspace) {
+        if (!workspace.swaps) workspace.swaps = [];
+        if (this.tmp_reorder) {
+            workspace.swaps.push(['move', this.tmp_reorder.draggedId, this.tmp_reorder.targetId]);
+        }
+    }
+
+    _moveElement(array, draggedId, targetId) {
+        const getId = w => w.id !== undefined ? w.id : w.get_id();
+        const draggedIdx = array.findIndex(w => getId(w) === draggedId);
+        const targetIdx = array.findIndex(w => getId(w) === targetId);
+        if (draggedIdx === -1 || targetIdx === -1 || draggedIdx === targetIdx) return;
+
+        const [dragged] = array.splice(draggedIdx, 1);
+        const newTargetIdx = array.findIndex(w => getId(w) === targetId);
+        if (draggedIdx < targetIdx) {
+            array.splice(newTargetIdx + 1, 0, dragged);
+        } else {
+            array.splice(newTargetIdx, 0, dragged);
         }
     }
 
@@ -1019,7 +1190,8 @@ export const TilingManager = GObject.registerClass({
         if (!windows || windows.length === 0) return { levels: [], vertical: false, overflow: false };
 
         const hash = this._getLayoutHash(windows, work_area);
-        if (this._cachedTileResult && this._lastLayoutHash === hash && !isSimulation) {
+        // Skip cache during drag (order changes but hash doesn't)
+        if (this._cachedTileResult && this._lastLayoutHash === hash && !isSimulation && !this.isDragging) {
             Logger.log('_tile: Cache hit, reusing layout');
             return this._cachedTileResult;
         }
@@ -1049,13 +1221,17 @@ export const TilingManager = GObject.registerClass({
         if (!currentResult.overflow) {
             result = currentResult;
             Logger.log(`_tile: ${windows.length} windows, vertical=${useVerticalShelves}, stable order`);
+        } else if (this.isDragging && !isSimulation) {
+            result = currentResult;
+            Logger.log(`_tile: ${windows.length} windows, vertical=${useVerticalShelves}, overflow (drag, no permute)`);
         } else {
             const optimalWindows = this._findOptimalOrder(windows, work_area, tilingFn);
             result = tilingFn.call(this, optimalWindows, work_area, spacing);
             Logger.log(`_tile: ${windows.length} windows, vertical=${useVerticalShelves}, reordered (overflow fallback)`);
         }
 
-        if (!isSimulation) {
+        // Don't cache during drag or simulation
+        if (!isSimulation && !this.isDragging) {
             this._lastLayoutHash = hash;
             this._cachedTileResult = result;
         }
@@ -1869,7 +2045,7 @@ export const TilingManager = GObject.registerClass({
         
         const tileArea = this.isDragging && this.dragRemainingSpace ? this.dragRemainingSpace : work_area;
         
-        let tile_info = this._tile(windows, tileArea);
+        let tile_info = this._tile(windows, tileArea, dryRun);
         let overflow = tile_info.overflow;
         
         if (workspace_windows.length <= 1) {

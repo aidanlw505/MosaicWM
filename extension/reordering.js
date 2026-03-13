@@ -14,14 +14,15 @@ export const ReorderingManager = GObject.registerClass({
         super._init();
         this.dragStart = false;
         this._positionChangedId = 0;
-        this._rejectedSwap = null;  // Track rejected swap to avoid repeated overflow checks
-        this._lastTileState = null;  // Track last tile state to avoid repeated tiling
-        
+        this._dragLayouts = null;
+        this._chosenLayout = null;
+        this._lastTileState = null;
+
         this._tilingManager = null;
         this._edgeTilingManager = null;
         this._animationsManager = null;
         this._windowingManager = null;
-        
+
         this._boundPositionHandler = null;
         this._dragContext = null;
     }
@@ -42,28 +43,28 @@ export const ReorderingManager = GObject.registerClass({
         this._windowingManager = manager;
     }
 
-    _cursorDistance(cursor, frame) {
-        let x = cursor.x - (frame.x + frame.width / 2);
-        let y = cursor.y - (frame.y + frame.height / 2);
+    _cursorDistance(cursor, rect) {
+        let x = cursor.x - (rect.x + rect.width / 2);
+        let y = cursor.y - (rect.y + rect.height / 2);
         return Math.sqrt(Math.pow(x, 2) + Math.pow(y, 2));
     }
 
     setPaused(paused) {
         this._paused = paused;
         if (paused && this._tilingManager) {
-            this._tilingManager.clearTmpSwap();
+            this._tilingManager.clearTmpReorder();
         }
     }
 
     _onPositionChanged() {
         if (!this.dragStart || !this._tilingManager || !this._dragContext) return;
-        
+
         if (this._paused) {
             return;
         }
-        
-        const { meta_window, id, windows } = this._dragContext;
-        
+
+        const { meta_window } = this._dragContext;
+
         let workspace = meta_window.get_workspace();
         let monitor = meta_window.get_monitor();
         let workArea = workspace.get_work_area_for_monitor(monitor);
@@ -73,170 +74,135 @@ export const ReorderingManager = GObject.registerClass({
             x: _cursor[0],
             y: _cursor[1]
         }
-        
-        // EDGE TILING AWARENESS
-        let edgeTiledWindows = [];
-        if (this._edgeTilingManager) {
-            edgeTiledWindows = this._edgeTilingManager.getEdgeTiledWindows(workspace, monitor);
-        }
-        const edgeTiledIds = edgeTiledWindows.map(s => s.window.get_id());
-        
-        const reorderableWindows = windows.filter(w => !edgeTiledIds.includes(w.id));
-        
-        // If dragged window became edge-tiled, skip swap logic
-        if (edgeTiledIds.includes(id)) {
-            return;
-        }
 
-        let minimum_distance = Infinity;
-        let target_id = null;
-        for(let window of reorderableWindows) {
-            let distance = this._cursorDistance(cursor, window);
-            if(distance < minimum_distance)
-            {
-                minimum_distance = distance;
-                target_id = window.id;
-            }
-        }
-
+        // Edge zone — defer to edge tiling handler
         let isOverEdgeZone = false;
         if (this._edgeTilingManager) {
             const zone = this._edgeTilingManager.detectZone(cursor.x, cursor.y, workArea, workspace);
             isOverEdgeZone = zone !== TileZone.NONE;
         }
-        
-        // When over edge zone, skip all swap and tiling logic - edge tiling handler manages the layout
+
         if (isOverEdgeZone) {
-            this._tilingManager.clearTmpSwap();
-            // Don't call tileWorkspaceWindows - edge tiling poll handles it
-        } else if (target_id === id || target_id === null) {
-            
-            // If we have a rejected swap active, don't reset to 'no-swap' immediately.
-            // This prevents bouncing when the "revert" animation temporarily makes the target detection fail.
-            // We just wait until we either find a VALID new target or hit the edge zone.
-            if (this._rejectedSwap) {
-                 // Ignoring no-swap because we have rejected swap
-            } else if (this._lastTileState !== 'no-swap') {
-                this._tilingManager.clearTmpSwap();
-                this._rejectedSwap = null;
-                this._tilingManager.tileWorkspaceWindows(workspace, meta_window, monitor);
-                this._lastTileState = 'no-swap';
+            this._tilingManager.clearTmpReorder();
+            this._lastTileState = 'edge-zone';
+            return;
+        }
+
+        if (!this._dragLayouts || this._dragLayouts.length === 0) return;
+
+        // Find closest trigger zone
+        let closestLayout = null;
+        let minDist = Infinity;
+        for (const layout of this._dragLayouts) {
+            const dist = this._cursorDistance(cursor, layout.draggedRect);
+            if (dist < minDist) {
+                minDist = dist;
+                closestLayout = layout;
             }
-        } else if (this._rejectedSwap === target_id) {
-            // This swap was already rejected due to overflow - do nothing, keep current layout
-            // Don't call tileWorkspaceWindows to avoid re-animation
-        } else {
-            // Try swap - only if we're changing to a new swap target
-            const newState = `swap-${target_id}`;
-            if (this._lastTileState !== newState) {
-                // DRY-RUN: Check if swap would cause overflow WITHOUT moving windows
-                this._tilingManager.setTmpSwap(id, target_id);
-                const dryRunResult = this._tilingManager.tileWorkspaceWindows(
-                    workspace, meta_window, monitor, false, false, true  // dryRun = true
-                );
-                
-                if (dryRunResult?.overflow) {
-                    // Swap would cause overflow - reject without ever moving windows
-                    this._rejectedSwap = target_id;
-                    this._tilingManager.clearTmpSwap();
-                    this._lastTileState = newState;
-                } else {
-                    // Swap is valid - now actually tile the windows
-                    const result = this._tilingManager.tileWorkspaceWindows(workspace, meta_window, monitor);
-                    this._rejectedSwap = null;
-                    this._lastTileState = newState;
-                    
-                    // Update cached positions using returned layout (no separate getter call needed)
-                    const layout = result?.layout;
-                    if (layout && this._dragContext?.windows) {
-                        for (const cachedWin of this._dragContext.windows) {
-                            const newPos = layout.find(l => l.id === cachedWin.id);
-                            if (newPos) {
-                                cachedWin.x = newPos.x;
-                                cachedWin.y = newPos.y;
-                                cachedWin.width = newPos.width;
-                                cachedWin.height = newPos.height;
-                            }
-                        }
-                    }
-                }
-            }
+        }
+
+        if (!closestLayout) return;
+
+        // Hysteresis: require 50% closer to switch layout
+        if (this._chosenLayout && closestLayout !== this._chosenLayout) {
+            const currentDist = this._cursorDistance(cursor, this._chosenLayout.draggedRect);
+            if (minDist > currentDist * 0.5) return;
+        }
+
+        const newState = `layout-${Math.round(closestLayout.draggedRect.x)}-${Math.round(closestLayout.draggedRect.y)}`;
+        if (this._lastTileState !== newState) {
+            this._tilingManager.applyDragLayout(closestLayout.positions, workspace, monitor);
+            this._lastTileState = newState;
+            this._chosenLayout = closestLayout;
         }
     }
 
     startDrag(meta_window) {
         if (!this._tilingManager) return;
-        
+
         Logger.log(`startDrag called for window ${meta_window.get_id()}`);
         let workspace = meta_window.get_workspace()
         let monitor = meta_window.get_monitor();
         let meta_windows = this._windowingManager.getMonitorWorkspaceWindows(workspace, monitor);
-        
+
         if (this._animationsManager) {
             this._animationsManager.setDragging(true);
         }
-        
-        // EDGE TILING AWARENESS
+
+        // Filter out edge-tiled windows
         let edgeTiledWindows = [];
         if (this._edgeTilingManager) {
             edgeTiledWindows = this._edgeTilingManager.getEdgeTiledWindows(workspace, monitor);
         }
         const edgeTiledIds = edgeTiledWindows.map(s => s.window.get_id());
-        
+
         const nonEdgeTiledMetaWindows = meta_windows.filter(w => !edgeTiledIds.includes(w.get_id()));
-        Logger.log(`startDrag: Total windows: ${meta_windows.length}, Edge-tiled: ${edgeTiledWindows.length}, Non-edge-tiled: ${nonEdgeTiledMetaWindows.length}`);
-        
+        Logger.log(`startDrag: Total: ${meta_windows.length}, Edge-tiled: ${edgeTiledWindows.length}, Mosaic: ${nonEdgeTiledMetaWindows.length}`);
+
         this._tilingManager.applySwaps(workspace, nonEdgeTiledMetaWindows);
-        
+
         let descriptors = this._tilingManager.windowsToDescriptors(nonEdgeTiledMetaWindows, monitor);
-        
+
         let remainingSpace = null;
         if (edgeTiledWindows.length > 0 && this._edgeTilingManager) {
             remainingSpace = this._edgeTilingManager.calculateRemainingSpace(workspace, monitor);
-            Logger.log(`startDrag: Remaining space for drag: x=${remainingSpace.x}, y=${remainingSpace.y}, w=${remainingSpace.width}, h=${remainingSpace.height}`);
+            Logger.log(`startDrag: Remaining space: x=${remainingSpace.x}, y=${remainingSpace.y}, w=${remainingSpace.width}, h=${remainingSpace.height}`);
         }
 
         this._tilingManager.createMask(meta_window);
         this._tilingManager.clearTmpSwap();
-        
+        this._tilingManager.clearTmpReorder();
+
         this._tilingManager.enableDragMode(remainingSpace);
 
         this.dragStart = true;
         const descriptorsCopy = JSON.parse(JSON.stringify(descriptors));
-        
+
         this._dragContext = {
             meta_window,
             id: meta_window.get_id(),
             windows: descriptorsCopy
         };
-        
-        this._paused = false; // Ensure paused state is reset on start
+
+        // Pre-compute all valid mosaic layouts for this drag session
+        const draggedId = meta_window.get_id();
+        const workArea = remainingSpace || workspace.get_work_area_for_monitor(monitor);
+        this._dragLayouts = this._tilingManager.computeDragLayouts(descriptorsCopy, workArea, draggedId);
+        this._chosenLayout = null;
+
+        Logger.log(`Pre-computed ${this._dragLayouts.length} valid drag positions`);
+
+        this._paused = false;
         this._onPositionChanged();
     }
 
     stopDrag(meta_window, skip_apply, skip_tiling) {
         if (!this._tilingManager) return;
-        
+
         Logger.log(`stopDrag called for window ${meta_window.get_id()}, dragStart was: ${this.dragStart}`);
         let workspace = meta_window.get_workspace();
         this.dragStart = false;
-        this._rejectedSwap = null;
+
+        // Persist chosen layout order
+        if (!skip_apply && this._chosenLayout) {
+            if (!workspace.swaps) workspace.swaps = [];
+            workspace.swaps = workspace.swaps.filter(op => !(Array.isArray(op) && op[0] === 'order'));
+            workspace.swaps.push(['order', this._chosenLayout.permOrder]);
+        }
+
+        this._dragLayouts = null;
+        this._chosenLayout = null;
         this._lastTileState = null;
-        
         this._dragContext = null;
-        
+
         if (this._animationsManager) {
             this._animationsManager.setDragging(false);
         }
-        
+
         this._tilingManager.disableDragMode();
         this._tilingManager.destroyMasks();
-        
-        if(!skip_apply)
-            this._tilingManager.applyTmpSwap(workspace);
-            
-        this._tilingManager.clearTmpSwap();
-        
+        this._tilingManager.clearTmpReorder();
+
         if (!skip_tiling) {
             this._tilingManager.tileWorkspaceWindows(workspace, null, meta_window.get_monitor());
         } else {
@@ -253,6 +219,8 @@ export const ReorderingManager = GObject.registerClass({
             this._positionChangedId = 0;
         }
         this.dragStart = false;
+        this._dragLayouts = null;
+        this._chosenLayout = null;
         this._boundPositionHandler = null;
         this._dragContext = null;
         this._tilingManager = null;
