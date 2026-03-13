@@ -2176,13 +2176,19 @@ export const TilingManager = GObject.registerClass({
             return;
         }
 
+        // Skip windows that opened maximized and haven't settled yet
+        if (WindowState.get(window, 'openedMaximized')) {
+            Logger.log(`savePreferredSize: Skipping for ${window.get_id()} - opened maximized, not yet settled`);
+            return;
+        }
+
         let size = null;
-        
+
         // Get frame size (window is not sacred here)
         const frame = window.get_frame_rect();
         size = { width: frame.width, height: frame.height };
-        
-        // Reject monitor-sized dimensions — no window's preferred size should match the screen
+
+        // Defense-in-depth: reject monitor-sized dimensions during transitions
         const workspace = window.get_workspace();
         const monitor = window.get_monitor();
         if (workspace && monitor !== null && monitor !== undefined) {

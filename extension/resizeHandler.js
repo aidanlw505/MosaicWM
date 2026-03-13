@@ -113,6 +113,19 @@ export const ResizeHandler = GObject.registerClass({
             let monitor = window.get_monitor();
 
             if (mode === Meta.SizeChange.FULLSCREEN || mode === Meta.SizeChange.MAXIMIZE) {
+                // Detect born-maximized: size-change fires BEFORE window-created for new windows.
+                // A window with no preferredSize/openingSize hasn't been through onWindowCreated yet.
+                if (!WindowState.get(window, 'preferredSize') &&
+                    !WindowState.get(window, 'openingSize') &&
+                    this.windowingManager.isMaximizedOrFullscreen(window)) {
+                    WindowState.set(window, 'openedMaximized', true);
+                    Logger.log(`onSizeChange: Detected born-maximized window ${window.get_id()} - skipping isolation`);
+                    return;
+                }
+                // Born-maximized guard (from onWindowCreated - for subsequent maximize events)
+                if (WindowState.get(window, 'openedMaximized')) {
+                    return;
+                }
                 // LOCK: Set flag to block onSizeChanged from saving giant dimensions
                 WindowState.set(window, 'isEnteringSacred', true);
                 
@@ -138,6 +151,10 @@ export const ResizeHandler = GObject.registerClass({
                     });
                 }
             } else if (mode === Meta.SizeChange.UNMAXIMIZE) {
+                // Born-maximized windows: don't set unmaximizing flag or try undo
+                if (WindowState.get(window, 'openedMaximized')) {
+                    return;
+                }
                 WindowState.set(window, 'unmaximizing', true);
                 const maxInfo = WindowState.get(window, 'maximizedUndoInfo');
                 if (maxInfo) {
@@ -191,6 +208,7 @@ export const ResizeHandler = GObject.registerClass({
                             this._timeoutRegistry.add(constants.RESIZE_SETTLE_DELAY_MS, () => {
                                 WindowState.remove(window, 'unmaximizing');
                                 WindowState.remove(window, 'targetRestoredSize');
+                                WindowState.remove(window, 'openedMaximized');
                                 return GLib.SOURCE_REMOVE;
                             }, 'resizeHandler_settleRestoreSacred');
                         }, this._timeoutRegistry);
@@ -249,9 +267,10 @@ export const ResizeHandler = GObject.registerClass({
             } else if (!isConstrained) {
                 // If NOT constrained and NOT manual, it might be an initial placement or legitimate external resize
                 // But we still guard against transition states
-                if (WindowState.get(window, 'isEnteringSacred') || 
+                if (WindowState.get(window, 'isEnteringSacred') ||
                     WindowState.get(window, 'unmaximizing') ||
-                    WindowState.get(window, 'isRestoringSacred')) {
+                    WindowState.get(window, 'isRestoringSacred') ||
+                    WindowState.get(window, 'openedMaximized')) {
                     Logger.log(`onSizeChanged: Save blocked by transition flag for ${window.get_id()}`);
                 } else {
                     const currentPreferredSize = WindowState.get(window, 'preferredSize');
@@ -511,6 +530,7 @@ export const ResizeHandler = GObject.registerClass({
                     WindowState.remove(window, 'unmaximizing');
                     WindowState.remove(window, 'isConstrainedByMosaic');
                     WindowState.remove(window, 'targetRestoredSize');
+                    WindowState.remove(window, 'openedMaximized');
                     return GLib.SOURCE_REMOVE;
                 }, 'resizeHandler_settleUnmaximizeReturn');
             }, this._timeoutRegistry);
