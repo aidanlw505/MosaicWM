@@ -4,6 +4,7 @@
   "uuid": "mosaicwm@cleomenezesjr.github.io",
   "url": "https://github.com/CleoMenezesJr/MosaicWM",
   "shell-version": [
-    "49"
+    "49",
+    "50"
   ]
 }
