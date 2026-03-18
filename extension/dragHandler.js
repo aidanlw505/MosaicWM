@@ -157,7 +157,13 @@ export const DragHandler = GObject.registerClass({
             Logger.log(`Connecting signal-based edge tiling listeners`);
             this._dragPositionChangedId = this._draggedWindow.connect('position-changed', this._onDragPositionChanged.bind(this));
         }
-        
+
+        // For keyboard/menu move: set up position tracking for reordering (no edge tiling)
+        if (grabpo === Meta.GrabOp.KEYBOARD_MOVING && !this.windowingManager.isExcluded(window)) {
+            this._draggedWindow = window;
+            this._dragPositionChangedId = this._draggedWindow.connect('position-changed', this._onDragPositionChanged.bind(this));
+        }
+
         if ( !this.windowingManager.isExcluded(window) &&
             (grabpo === Meta.GrabOp.MOVING || grabpo === Meta.GrabOp.KEYBOARD_MOVING) && 
             !(this.windowingManager.isMaximizedOrFullscreen(window))) {
@@ -208,7 +214,7 @@ export const DragHandler = GObject.registerClass({
             return;
         }
         
-        if (grabpo === Meta.GrabOp.MOVING && window === this._draggedWindow) {
+        if ((grabpo === Meta.GrabOp.MOVING || grabpo === Meta.GrabOp.KEYBOARD_MOVING) && window === this._draggedWindow) {
             if (this._dragPositionChangedId && window) {
                 try {
                     window.disconnect(this._dragPositionChangedId);
@@ -217,8 +223,8 @@ export const DragHandler = GObject.registerClass({
                 }
                 this._dragPositionChangedId = 0;
             }
-            
-            if (this._currentZone !== TileZone.NONE) {
+
+            if (grabpo === Meta.GrabOp.MOVING && this._currentZone !== TileZone.NONE) {
                 Logger.log(`Edge tiling: applying zone ${this._currentZone}`);
                 const workspace = window.get_workspace();
                 const monitor = window.get_monitor();
