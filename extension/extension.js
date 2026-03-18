@@ -135,6 +135,16 @@ export default class WindowMosaicExtension extends Extension {
         }, this._timeoutRegistry);
     };
 
+    // Syncs _currentWorkspaceIndex after reorder_workspace (no active-workspace-changed fired).
+    _workspacesReorderedHandler = () => {
+        const activeWorkspace = this._workspaceManager.get_active_workspace();
+        const newIndex = activeWorkspace.index();
+        if (this._currentWorkspaceIndex !== newIndex) {
+            Logger.log(`[WORKSPACE REORDER] Index updated: ${this._currentWorkspaceIndex} -> ${newIndex}`);
+            this._currentWorkspaceIndex = newIndex;
+        }
+    };
+
     _workspaceAddSignal = (_, workspaceIdx) => {
         const workspace = this._workspaceManager.get_workspace_by_index(workspaceIdx);
         let eventIds = [];
@@ -303,6 +313,7 @@ export default class WindowMosaicExtension extends Extension {
         this._onOverviewHiddenId = Main.overview.connect('hidden', () => this.windowHandler.onOverviewHidden());
 
         this._workspaceManEventIds.push(global.workspace_manager.connect("active-workspace-changed", this._workspaceSwitchedHandler));
+        this._workspaceManEventIds.push(global.workspace_manager.connect("workspaces-reordered", this._workspacesReorderedHandler));
         this._workspaceManEventIds.push(global.workspace_manager.connect("workspace-added", this._workspaceAddSignal));
 
         let nWorkspaces = this._workspaceManager.get_n_workspaces();

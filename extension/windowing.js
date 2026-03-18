@@ -263,11 +263,10 @@ export const WindowingManager = GObject.registerClass({
         }
         
         const previous_workspace = window.get_workspace();
-        // Respect the queue's request to NOT shift the camera focus if we're processing a batch of windows
-        const switchFocusToMovedWindow = (global.workspace_manager.get_active_workspace() === previous_workspace) && options.switchFocus !== false;
-        
+        const switchFocusRequested = options.switchFocus !== false;
+
         window.change_workspace(target_workspace);
-        
+
         // Defer activation to next idle (no artificial delay)
             this._timeoutRegistry.addIdle(() => {
                 const workspaceIndex = target_workspace.index();
@@ -277,10 +276,15 @@ export const WindowingManager = GObject.registerClass({
                     return GLib.SOURCE_REMOVE;
                 }
 
-                if (switchFocusToMovedWindow) {
-                    target_workspace.activate(global.get_current_time());
-                    this.showWorkspaceSwitcher(target_workspace, monitor);
-                }
+                // Decide focus after any ongoing workspace switch completes,
+                // avoiding fights with user-initiated navigation.
+                afterWorkspaceSwitch(() => {
+                    const stillOnOrigin = global.workspace_manager.get_active_workspace() === previous_workspace;
+                    if (stillOnOrigin && switchFocusRequested) {
+                        target_workspace.activate(global.get_current_time());
+                        this.showWorkspaceSwitcher(target_workspace, monitor);
+                    }
+                }, this._timeoutRegistry);
                 
                 // Re-tile after window has settled
                 if (this._tilingManager) {
