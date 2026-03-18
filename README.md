@@ -1,5 +1,8 @@
 # Mosaic WM
 
+> 📣 **Follow the development journey on Mastodon!** Progress updates, design decisions, and behind-the-scenes posts:
+> [floss.social/@CleoMenezesJr](https://floss.social/@CleoMenezesJr/115606214788777474)
+
 **Rethinking window management for GNOME Shell**
 
 A GNOME Shell extension that provides automatic window tiling in a mosaic layout. Inspired by [GNOME's vision for rethinking window management](https://blogs.gnome.org/tbernard/2023/07/26/rethinking-window-management/), Mosaic WM intelligently arranges windows to maximize screen space while maintaining visual harmony.
