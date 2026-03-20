@@ -13,7 +13,7 @@ PACKAGES=(
   mutter
   mutter-devkit
   flatpak
-  dbus-tools
+  dbus-daemon
 )
 
 usage() {
@@ -75,7 +75,11 @@ while true; do
 done
 
 echo "Creating toolbox $TOOLBOX (Fedora $RELEASE)..."
-toolbox create --assumeyes --distro fedora --release "$RELEASE" "$TOOLBOX"
+if [[ "$RELEASE" == "rawhide" ]]; then
+  toolbox create --assumeyes --image registry.fedoraproject.org/fedora-toolbox:rawhide "$TOOLBOX"
+else
+  toolbox create --assumeyes --distro fedora --release "$RELEASE" "$TOOLBOX"
+fi
 
 echo "Installing packages: ${PACKAGES[*]}..."
 toolbox run --container "$TOOLBOX" sudo dnf install -y "${PACKAGES[@]}"
