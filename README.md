@@ -10,8 +10,8 @@ A GNOME Shell extension that provides automatic window tiling in a mosaic layout
 > [!WARNING]
 > **Experimental Extension**: This extension is under active development and may contain bugs or unexpected behavior. Use at your own risk. Please report any issues.
 
-> [!NOTE]
-> Developed for GNOME Shell 49. Tested only on this version.
+> [!IMPORTANT]
+> Requires GNOME Shell 50+ (Mutter 50). See [this post](https://floss.social/@CleoMenezesJr/116259051479532655) for details.
 
 ## 💡 Philosophy
 
@@ -87,7 +87,7 @@ Once enabled, the extension works automatically:
 
 ### Prerequisites
 
-- GNOME Shell 49+
+- GNOME Shell 50+
 - Git
 
 ### Building & Testing
