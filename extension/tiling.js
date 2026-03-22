@@ -90,21 +90,27 @@ export const TilingManager = GObject.registerClass({
         };
     }
 
-    // Native minimum size via Mutter 50+ get_min_size(), with fallback
+    // Native minimum size via Mutter 50+ get_min_size(), with fallback.
+    // Also checks cached actual minimums discovered from client-side clamping
+    // (e.g., libadwaita apps report 100px via get_min_size but enforce 360px).
     getWindowMinimumSize(window) {
+        let baseW = constants.SMART_RESIZE_MIN_WINDOW_WIDTH;
+        let baseH = constants.SMART_RESIZE_MIN_WINDOW_HEIGHT;
+
         if (window.get_min_size) {
             const [hasHint, minW, minH] = window.get_min_size();
             if (hasHint) {
-                return {
-                    width: Math.max(minW, constants.SMART_RESIZE_MIN_WINDOW_WIDTH),
-                    height: Math.max(minH, constants.SMART_RESIZE_MIN_WINDOW_HEIGHT),
-                };
+                baseW = Math.max(minW, baseW);
+                baseH = Math.max(minH, baseH);
             }
         }
-        return {
-            width: constants.SMART_RESIZE_MIN_WINDOW_WIDTH,
-            height: constants.SMART_RESIZE_MIN_WINDOW_HEIGHT,
-        };
+
+        const actualMinW = WindowState.get(window, 'actualMinWidth');
+        const actualMinH = WindowState.get(window, 'actualMinHeight');
+        if (actualMinW) baseW = Math.max(actualMinW, baseW);
+        if (actualMinH) baseH = Math.max(actualMinH, baseH);
+
+        return { width: baseW, height: baseH };
     }
 
     // Native maximum size via Mutter 50+ get_max_size()
@@ -2013,6 +2019,9 @@ export const TilingManager = GObject.registerClass({
         }
         this._isSmartResizingBlocked = true;
 
+        // Reset rebalance counter for this new smart resize cycle
+        this._extension?.resizeHandler?.resetConstraintRebalanceCount();
+
         try {
             const allResizable = [];
             const allWindows = [];
@@ -2107,6 +2116,133 @@ export const TilingManager = GObject.registerClass({
             }
 
             return true;
+        } finally {
+            this._isSmartResizingBlocked = false;
+        }
+    }
+
+    // Re-run binary search with corrected minimums after client-side clamping detection.
+    // Uses preferredSize (original pre-smart-resize) as ceiling for full interpolation range.
+    rebalanceSmartResize(workspace, monitor) {
+        if (this._isSmartResizingBlocked) {
+            Logger.log(`[SMART RESIZE] Rebalance blocked`);
+            return;
+        }
+        this._isSmartResizingBlocked = true;
+
+        try {
+            const workArea = this.getUsableWorkArea(workspace, monitor);
+            const allWindows = this._windowingManager.getMonitorWorkspaceWindows(workspace, monitor)
+                .filter(w => !this._edgeTilingManager?.isEdgeTiled(w) &&
+                             !this._windowingManager.isMaximizedOrFullscreen(w));
+
+            if (allWindows.length === 0) return;
+
+            const windowData = new Map();
+            const allResizable = [];
+
+            for (const w of allWindows) {
+                // Use preferred/original size as ceiling (the size before smart resize)
+                const preferred = WindowState.get(w, 'preferredSize') || WindowState.get(w, 'originalSize');
+                const current = preferred || this.getEffectiveWindowSize(w);
+                const min = this.getWindowMinimumSize(w);
+                const isResizable = w.allows_resize?.();
+
+                windowData.set(w.get_id(), { window: w, current, min, isResizable });
+                if (isResizable) allResizable.push(w);
+            }
+
+            if (allResizable.length === 0) return;
+
+            Logger.log(`[SMART RESIZE] Rebalancing ${allWindows.length} windows, workArea: ${workArea.width}×${workArea.height}`);
+            for (const [id, d] of windowData) {
+                Logger.log(`[SMART RESIZE]   Rebal ${id}: ceiling=${d.current.width}×${d.current.height}, min=${d.min.width}×${d.min.height}`);
+            }
+
+            const buildSimulated = (t) => allWindows.map(w => {
+                const d = windowData.get(w.get_id());
+                if (!d.isResizable)
+                    return { id: w.get_id(), width: d.current.width, height: d.current.height };
+                const effMinW = Math.min(d.min.width, d.current.width);
+                const effMinH = Math.min(d.min.height, d.current.height);
+                return {
+                    id: w.get_id(),
+                    width: Math.round(effMinW + (d.current.width - effMinW) * t),
+                    height: Math.round(effMinH + (d.current.height - effMinH) * t),
+                };
+            });
+
+            // Natural fit: all at preferred sizes
+            if (!this._tile(buildSimulated(1.0), workArea, true).overflow) {
+                Logger.log(`[SMART RESIZE] Rebalance: natural fit, restoring preferred sizes`);
+                for (const w of allWindows) {
+                    const d = windowData.get(w.get_id());
+                    if (!d.isResizable) continue;
+                    const frame = w.get_frame_rect();
+                    WindowState.set(w, 'isSmartResizing', true);
+                    w.move_resize_frame(false, frame.x, frame.y, d.current.width, d.current.height);
+                    WindowState.set(w, 'isSmartResizing', false);
+                    WindowState.set(w, 'targetSmartResizeSize', null);
+                    WindowState.set(w, 'isConstrainedByMosaic', false);
+                }
+                this.invalidateLayoutCache();
+                this.tileWorkspaceWindows(workspace, null, monitor, true);
+                return;
+            }
+
+            // Overflow inevitable at corrected minimums
+            if (this._tile(buildSimulated(0.0), workArea, true).overflow) {
+                Logger.log(`[SMART RESIZE] Rebalance: overflow inevitable at corrected minimums`);
+                // Clear smart resize state — let normal overflow handle it
+                for (const w of allWindows) {
+                    WindowState.set(w, 'targetSmartResizeSize', null);
+                    WindowState.set(w, 'isConstrainedByMosaic', false);
+                }
+
+                // Find newest window and overflow it
+                const newest = allWindows.reduce((n, w) => {
+                    const t1 = WindowState.get(w, 'addedTime') || 0;
+                    const t2 = WindowState.get(n, 'addedTime') || 0;
+                    return t1 > t2 ? w : n;
+                }, allWindows[0]);
+
+                Logger.log(`[SMART RESIZE] Overflowing newest window ${newest.get_id()}`);
+                this._windowingManager.moveOversizedWindow(newest).then(() => {
+                    this.invalidateLayoutCache();
+                    this.tileWorkspaceWindows(workspace, null, monitor, true);
+                }).catch(e => Logger.error(`Rebalance overflow failed: ${e}`));
+                return;
+            }
+
+            // Binary search with corrected minimums
+            let lo = 0.0, hi = 1.0;
+            for (let i = 0; i < 15; i++) {
+                const mid = (lo + hi) / 2;
+                if (!this._tile(buildSimulated(mid), workArea, true).overflow)
+                    lo = mid;
+                else
+                    hi = mid;
+            }
+
+            Logger.log(`[SMART RESIZE] Rebalance scale factor: ${lo.toFixed(4)}`);
+
+            const finalSizes = buildSimulated(lo);
+            for (const sim of finalSizes) {
+                const d = windowData.get(sim.id);
+                if (!d.isResizable) continue;
+                if (sim.width >= d.current.width && sim.height >= d.current.height) continue;
+
+                const w = d.window;
+                const frame = w.get_frame_rect();
+                WindowState.set(w, 'targetSmartResizeSize', { width: sim.width, height: sim.height });
+                WindowState.set(w, 'isConstrainedByMosaic', true);
+
+                w.move_resize_frame(false, frame.x, frame.y, sim.width, sim.height);
+                Logger.log(`[SMART RESIZE] Rebal ${sim.id}: → ${sim.width}×${sim.height}`);
+            }
+
+            this.invalidateLayoutCache();
+            this.tileWorkspaceWindows(workspace, null, monitor, true);
         } finally {
             this._isSmartResizingBlocked = false;
         }

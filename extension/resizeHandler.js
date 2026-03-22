@@ -40,6 +40,32 @@ export const ResizeHandler = GObject.registerClass({
     get _skipNextTiling() { return this.dragHandler._skipNextTiling; }
     set _skipNextTiling(val) { this.dragHandler._skipNextTiling = val; }
 
+    _queueConstraintRebalance(window) {
+        if (this._constraintRebalanceQueued) return;
+
+        this._constraintRebalanceCount = (this._constraintRebalanceCount || 0) + 1;
+        if (this._constraintRebalanceCount > 3) {
+            Logger.log(`[SMART RESIZE] Max rebalance attempts reached, skipping`);
+            return;
+        }
+
+        const workspace = window.get_workspace();
+        const monitor = window.get_monitor();
+
+        this._constraintRebalanceQueued = true;
+        this._timeoutRegistry.addIdle(() => {
+            this._constraintRebalanceQueued = false;
+            if (workspace && workspace.index() >= 0) {
+                this.tilingManager.rebalanceSmartResize(workspace, monitor);
+            }
+            return GLib.SOURCE_REMOVE;
+        }, 'resizeHandler_constraintRebalance');
+    }
+
+    resetConstraintRebalanceCount() {
+        this._constraintRebalanceCount = 0;
+    }
+
     onResizeBegin(window, grabpo) {
         this._resizeInOverflow = false;
         this._lastResizeTileTime = 0;
@@ -183,10 +209,19 @@ export const ResizeHandler = GObject.registerClass({
                 return;
             }
 
-            // Skip size-changed from tryFitWithResize; clear bridge state for future resizes
+            // Detect client-side clamping after smart resize.
+            // If actual size > target, the client enforced a larger minimum.
             const pendingSmartSize = WindowState.get(window, 'targetSmartResizeSize');
             if (pendingSmartSize) {
-                WindowState.set(window, 'targetSmartResizeSize', null);
+                if (rect.width > pendingSmartSize.width + 2 || rect.height > pendingSmartSize.height + 2) {
+                    Logger.log(`[SMART RESIZE] Window ${window.get_id()} clamped: target=${pendingSmartSize.width}×${pendingSmartSize.height}, actual=${rect.width}×${rect.height}`);
+                    WindowState.set(window, 'targetSmartResizeSize', { width: rect.width, height: rect.height });
+                    WindowState.set(window, 'actualMinWidth', rect.width);
+                    WindowState.set(window, 'actualMinHeight', rect.height);
+                    this._queueConstraintRebalance(window);
+                } else {
+                    WindowState.set(window, 'targetSmartResizeSize', null);
+                }
                 this._sizeChanged = false;
                 return;
             }
@@ -454,6 +489,8 @@ export const ResizeHandler = GObject.registerClass({
         this._lastResizeWindow = null;
         this._lastResizeTime = 0;
         this._lastResizeTileTime = 0;
+        this._constraintRebalanceQueued = false;
+        this._constraintRebalanceCount = 0;
         this._ext = null;
     }
 
