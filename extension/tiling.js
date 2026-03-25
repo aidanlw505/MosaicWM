@@ -1117,9 +1117,12 @@ export const TilingManager = GObject.registerClass({
             current_monitor = window.get_monitor();
 
         let meta_windows = this._windowingManager.getMonitorWorkspaceWindows(workspace, current_monitor);
-        
+
         // Filter out excluded windows (always on top, sticky, etc.)
         meta_windows = meta_windows.filter(w => !this._windowingManager.isExcluded(w));
+
+        // Filter out windows still pending in the evaluation queue — they haven't been processed yet
+        meta_windows = meta_windows.filter(w => !WindowState.get(w, 'pendingInQueue'));
         
         // Exclude the reference window only if explicitly requested (for overflow scenarios)
         if (window && excludeFromTiling && !this.isDragging) {
@@ -1577,7 +1580,8 @@ export const TilingManager = GObject.registerClass({
         }
         
         const isIncomingSacred = this._windowingManager.isMaximizedOrFullscreen(window);
-        const currentWindows = this._windowingManager.getMonitorWorkspaceWindows(workspace, monitor);
+        const currentWindows = this._windowingManager.getMonitorWorkspaceWindows(workspace, monitor)
+            .filter(w => !WindowState.get(w, 'pendingInQueue'));
         const otherWindows = currentWindows.filter(w => w.get_id() !== window.get_id());
         const hasExistingSacred = otherWindows.some(w => this._windowingManager.isMaximizedOrFullscreen(w));
 
@@ -1643,21 +1647,22 @@ export const TilingManager = GObject.registerClass({
             !edgeTiledIds.includes(w.id)
         );
         
-        // Use pending async sizes over stale frame rects
+        // Use preferred sizes for deterministic simulation — transient sizes cause inconsistent thresholds
         const workspaceWindows = workspace.list_windows();
 
         for (const w of windows) {
             const realWindow = workspaceWindows.find(win => win.get_id() === w.id);
             if (realWindow) {
                 const restoredSize = WindowState.get(realWindow, 'targetRestoredSize');
-                const smartSize = WindowState.get(realWindow, 'targetSmartResizeSize');
+                const preferredSize = WindowState.get(realWindow, 'preferredSize')
+                    || WindowState.get(realWindow, 'openingSize');
 
                 if (restoredSize) {
                     w.width = restoredSize.width;
                     w.height = restoredSize.height;
-                } else if (smartSize) {
-                    w.width = smartSize.width;
-                    w.height = smartSize.height;
+                } else if (preferredSize) {
+                    w.width = preferredSize.width;
+                    w.height = preferredSize.height;
                 } else {
                     const realFrame = realWindow.get_frame_rect();
                     w.width = realFrame.width;
@@ -1670,7 +1675,7 @@ export const TilingManager = GObject.registerClass({
         
         if (!windowAlreadyInWorkspace) {
             let realWidth, realHeight;
-            
+
             if (overrideSize) {
                 realWidth = overrideSize.width;
                 realHeight = overrideSize.height;
@@ -1679,7 +1684,7 @@ export const TilingManager = GObject.registerClass({
                 const smartResizeSize = WindowState.get(window, 'targetSmartResizeSize');
                 const preferredSize = WindowState.get(window, 'preferredSize') || WindowState.get(window, 'openingSize');
                 const frame = window.get_frame_rect();
-                
+
                 if (smartResizeSize) {
                     realWidth = smartResizeSize.width;
                     realHeight = smartResizeSize.height;
@@ -2042,7 +2047,9 @@ export const TilingManager = GObject.registerClass({
 
                 allWindows.push(w);
 
-                const current = this.getEffectiveWindowSize(w);
+                // Use preferred size as ceiling for deterministic binary search
+                const preferred = WindowState.get(w, 'preferredSize') || WindowState.get(w, 'openingSize');
+                const current = preferred || this.getEffectiveWindowSize(w);
                 const min = this.getWindowMinimumSize(w);
                 const isResizable = w.allows_resize && w.allows_resize();
 
@@ -2133,7 +2140,8 @@ export const TilingManager = GObject.registerClass({
         try {
             const workArea = this.getUsableWorkArea(workspace, monitor);
             const allWindows = this._windowingManager.getMonitorWorkspaceWindows(workspace, monitor)
-                .filter(w => !this._edgeTilingManager?.isEdgeTiled(w) &&
+                .filter(w => !WindowState.get(w, 'pendingInQueue') &&
+                             !this._edgeTilingManager?.isEdgeTiled(w) &&
                              !this._windowingManager.isMaximizedOrFullscreen(w));
 
             if (allWindows.length === 0) return;

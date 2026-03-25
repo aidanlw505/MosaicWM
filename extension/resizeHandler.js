@@ -43,6 +43,9 @@ export const ResizeHandler = GObject.registerClass({
     _queueConstraintRebalance(window) {
         if (this._constraintRebalanceQueued) return;
 
+        // Suppress rebalance during queue evaluation — the queue handles its own overflow
+        if (this._ext.windowHandler && this._ext.windowHandler.isEvaluatingQueue) return;
+
         this._constraintRebalanceCount = (this._constraintRebalanceCount || 0) + 1;
         if (this._constraintRebalanceCount > 3) {
             Logger.log(`[SMART RESIZE] Max rebalance attempts reached, skipping`);
@@ -200,10 +203,13 @@ export const ResizeHandler = GObject.registerClass({
         let window = win.meta_window;
         if (!this._sizeChanged && !this.windowingManager.isExcluded(window)) {
             if (!this.windowingManager.isRelated(window)) return;
-            
+
+            // Windows pending in the evaluation queue haven't been processed yet — ignore size changes
+            if (WindowState.get(window, 'pendingInQueue')) return;
+
             const rect = window.get_frame_rect();
             if (rect.width <= constants.ANIMATION_DIFF_THRESHOLD || rect.height <= constants.ANIMATION_DIFF_THRESHOLD) return;
-            
+
             if (WindowState.get(window, 'isSmartResizing') || WindowState.get(window, 'isReverseSmartResizing')) {
                 this._sizeChanged = false;
                 return;
@@ -426,6 +432,12 @@ export const ResizeHandler = GObject.registerClass({
                 }
                 
                 if (workspace._smartResizingInProgress || WindowState.get(window, 'isSmartResizing') || this.tilingManager._isSmartResizingBlocked) {
+                    this._sizeChanged = false;
+                    return;
+                }
+
+                // Skip tiling while the evaluation queue is processing — it handles its own tiling
+                if (this._ext.windowHandler && this._ext.windowHandler.isEvaluatingQueue) {
                     this._sizeChanged = false;
                     return;
                 }

@@ -85,6 +85,8 @@ export const WindowHandler = GObject.registerClass({
 
     destroy() {
         this.unpatchMapWindow();
+        for (const entry of this._evaluationQueue)
+            WindowState.remove(entry.window, 'pendingInQueue');
         this._evaluationQueue = [];
         this._isEvaluatingQueue = false;
     }
@@ -215,6 +217,11 @@ export const WindowHandler = GObject.registerClass({
         return this._workspaceLocks.get(workspace) === true;
     }
 
+    // Check if the evaluation queue is currently processing windows.
+    get isEvaluatingQueue() {
+        return this._isEvaluatingQueue;
+    }
+
     // Accessor shortcuts
     get windowingManager() { return this._ext.windowingManager; }
     get tilingManager() { return this._ext.tilingManager; }
@@ -332,6 +339,9 @@ export const WindowHandler = GObject.registerClass({
         ids.push(window.connect('size-changed', (win) => {
             ComputedLayouts.delete(win);
             if (WindowState.get(win, 'isSmartResizing') || WindowState.get(win, 'isReverseSmartResizing')) {
+                // During queue evaluation, skip ALL processing — preserve target sizes
+                // so subsequent canFitWindow/tryFitWithResize calls see consistent state
+                if (this._isEvaluatingQueue) return;
                 const target = WindowState.get(win, 'targetSmartResizeSize');
                 if (target)
                     WindowState.set(win, 'targetSmartResizeSize', null);
@@ -604,10 +614,14 @@ export const WindowHandler = GObject.registerClass({
             return;
         }
         Logger.log(`Enqueueing window ${windowId} for evaluation`);
+        WindowState.set(window, 'pendingInQueue', true);
         this._evaluationQueue.push({ window, workspace, monitor });
         if (!this._isEvaluatingQueue) {
             this._processEvaluationQueue().catch(e => {
                 Logger.error(`Evaluation queue failed: ${e}\n${e.stack}`);
+                for (const entry of this._evaluationQueue)
+                    WindowState.remove(entry.window, 'pendingInQueue');
+                this._evaluationQueue = [];
                 this._isEvaluatingQueue = false;
             });
         }
@@ -627,6 +641,7 @@ export const WindowHandler = GObject.registerClass({
 
         while (this._evaluationQueue.length > 0) {
             let { window, workspace, monitor } = this._evaluationQueue.shift();
+            WindowState.remove(window, 'pendingInQueue');
 
             if (!window || !window.get_compositor_private()) {
                 Logger.log('Evaluation queue: window destroyed before evaluation, skipping');
@@ -685,7 +700,7 @@ export const WindowHandler = GObject.registerClass({
                 }
 
                 const managedWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor)
-                    .filter(w => !this.windowingManager.isExcluded(w));
+                    .filter(w => !this.windowingManager.isExcluded(w) && !WindowState.get(w, 'pendingInQueue'));
 
                 if (managedWindows.length === 0) {
                     // Only renavigate if the workspace is truly empty and not just being transitioned during overflow
@@ -730,7 +745,8 @@ export const WindowHandler = GObject.registerClass({
         // Path 1: Sacred Isolation - Symmetric isolation enforcement.
         const isIncomingSacred = this.windowingManager.isMaximizedOrFullscreen(window);
         const hasExistingSacred = this.windowingManager.hasSacredWindow(workspace, monitor, window.get_id());
-        const workspaceWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor);
+        const workspaceWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor)
+            .filter(w => !WindowState.get(w, 'pendingInQueue'));
         const otherWindows = workspaceWindows.filter(w => w.get_id() !== window.get_id());
 
         if (hasExistingSacred || (isIncomingSacred && otherWindows.length > 0)) {
@@ -770,7 +786,7 @@ export const WindowHandler = GObject.registerClass({
         // Path 3: Fitting & Smart Resize
         // Use TARGET size for restoration flows to avoid transient overflow ejection.
         const targetSize = WindowState.get(window, 'targetRestoredSize');
-        const canFit = this.tilingManager.canFitWindow(window, workspace, monitor, targetSize);
+        const canFit = this.tilingManager.canFitWindow(window, workspace, monitor, false, targetSize);
 
         if (canFit) {
             Logger.log('Window fits - tiling workspace directly');
@@ -788,7 +804,8 @@ export const WindowHandler = GObject.registerClass({
         }
 
         const allExistingWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor)
-            .filter(w => w.get_id() !== window.get_id() && !this.edgeTilingManager.isEdgeTiled(w));
+            .filter(w => w.get_id() !== window.get_id() && !this.edgeTilingManager.isEdgeTiled(w)
+                && !WindowState.get(w, 'pendingInQueue'));
 
         const existingWindows = allExistingWindows.filter(w => !this.windowingManager.isMaximizedOrFullscreen(w));
 

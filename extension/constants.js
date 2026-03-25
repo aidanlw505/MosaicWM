@@ -71,7 +71,7 @@ export const SMART_RESIZE_MIN_WINDOW_HEIGHT = 100;
 
 // Slide-in animation for new windows
 export const SLIDE_IN_OFFSET_PX = 100;        // Offset in pixels for new window slide-in animation
-export const QUEUE_PROCESS_DELAY_MS = 10;    // Delay between processing window opening queue items
+export const QUEUE_PROCESS_DELAY_MS = 100;   // Delay between processing window opening queue items (Mutter settling)
 
 export const RESIZE_GRAB_OPS = [
     Meta.GrabOp.RESIZING_NW, Meta.GrabOp.RESIZING_N, Meta.GrabOp.RESIZING_NE,
