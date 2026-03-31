@@ -137,6 +137,11 @@ export const TilingManager = GObject.registerClass({
             const simulatedWindows = windows.map(w => {
                 const shrunk = shrunkWindows.find(sw => sw.id === w.get_id());
                 if (!shrunk) {
+                    // Use targetSmartResizeSize when present — WindowDescriptor uses the same value
+                    // during actual tiling; diverging here would make simulations inconsistent.
+                    const smartResizeSize = WindowState.get(w, 'targetSmartResizeSize');
+                    if (smartResizeSize)
+                        return { id: w.get_id(), width: smartResizeSize.width, height: smartResizeSize.height };
                     const f = w.get_frame_rect();
                     return { id: w.get_id(), width: f.width, height: f.height };
                 }
@@ -1647,19 +1652,30 @@ export const TilingManager = GObject.registerClass({
             !edgeTiledIds.includes(w.id)
         );
         
-        // Use preferred sizes for deterministic simulation — transient sizes cause inconsistent thresholds
+        // targetSmartResizeSize takes priority: preferredSize holds the pre-resize original, which would falsely report overflow.
         const workspaceWindows = workspace.list_windows();
 
         for (const w of windows) {
             const realWindow = workspaceWindows.find(win => win.get_id() === w.id);
             if (realWindow) {
                 const restoredSize = WindowState.get(realWindow, 'targetRestoredSize');
+                const smartResizeSize = WindowState.get(realWindow, 'targetSmartResizeSize');
+                const isConstrained = WindowState.get(realWindow, 'isConstrainedByMosaic');
                 const preferredSize = WindowState.get(realWindow, 'preferredSize')
                     || WindowState.get(realWindow, 'openingSize');
 
                 if (restoredSize) {
                     w.width = restoredSize.width;
                     w.height = restoredSize.height;
+                } else if (smartResizeSize) {
+                    // Resize pending — target not yet reached
+                    w.width = smartResizeSize.width;
+                    w.height = smartResizeSize.height;
+                } else if (isConstrained) {
+                    // targetSmartResizeSize cleared after frame settles — use actual frame, not preferredSize.
+                    const realFrame = realWindow.get_frame_rect();
+                    w.width = realFrame.width;
+                    w.height = realFrame.height;
                 } else if (preferredSize) {
                     w.width = preferredSize.width;
                     w.height = preferredSize.height;

@@ -749,6 +749,13 @@ export const WindowHandler = GObject.registerClass({
             return workspace;
         }
 
+        // Already constrained — sibling frames may not have settled yet; tile directly to avoid false overflow.
+        if (WindowState.get(window, 'isConstrainedByMosaic')) {
+            Logger.log(`ensureWindowFits: Window ${window.get_id()} already constrained by mosaic - tiling directly`);
+            this.tilingManager.tileWorkspaceWindows(workspace, null, monitor, false);
+            return workspace;
+        }
+
         // Path 1: Sacred Isolation - Symmetric isolation enforcement.
         const isIncomingSacred = this.windowingManager.isMaximizedOrFullscreen(window);
         const hasExistingSacred = this.windowingManager.hasSacredWindow(workspace, monitor, window.get_id());
@@ -937,6 +944,13 @@ export const WindowHandler = GObject.registerClass({
                         return GLib.SOURCE_REMOVE;
                     }
                     Logger.log('New window: Tiling failed, continuing with normal flow');
+                }
+
+                // Mutter discards resizes while overview is open — defer until onOverviewHidden.
+                if (Main.overview.visible) {
+                    Logger.log(`Window ${window.get_id()} created while overview visible - deferring evaluation until overview hidden`);
+                    WindowState.set(window, 'deferTilingUntilOverviewHidden', true);
+                    return GLib.SOURCE_REMOVE;
                 }
 
                 // Enqueue window for async sequential fit evaluation
