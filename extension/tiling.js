@@ -1729,10 +1729,11 @@ export const TilingManager = GObject.registerClass({
                      existingDescriptor.width = overrideSize.width;
                      existingDescriptor.height = overrideSize.height;
                  } else {
-                     // Ensure we use the best available size info
+                     // Skip constrained windows — their frame was set above; preferredSize is pre-constraint and would falsely report overflow.
                      const preferred = WindowState.get(window, 'preferredSize');
+                     const isConstrained = WindowState.get(window, 'isConstrainedByMosaic');
                      const isMaximized = window.is_maximized();
-                     if (preferred && !window.is_fullscreen() && !isMaximized) {
+                     if (preferred && !window.is_fullscreen() && !isMaximized && !isConstrained) {
                          existingDescriptor.width = preferred.width;
                          existingDescriptor.height = preferred.height;
                      }
