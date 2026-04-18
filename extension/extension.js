@@ -353,39 +353,39 @@ export default class WindowMosaicExtension extends Extension {
     _setupKeybindings() {
         const settings = this.getSettings('org.gnome.shell.extensions.mosaic-wm');
 
-        Main.wm.addKeybinding('tile-left', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
-            () => this._tileActiveWindow(TileZone.LEFT_FULL));
-
-        Main.wm.addKeybinding('tile-right', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
-            () => this._tileActiveWindow(TileZone.RIGHT_FULL));
-
-        Main.wm.addKeybinding('tile-top-left', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
-            () => this._tileActiveWindow(TileZone.TOP_LEFT));
-
-        Main.wm.addKeybinding('tile-top-right', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
-            () => this._tileActiveWindow(TileZone.TOP_RIGHT));
-
-        Main.wm.addKeybinding('tile-bottom-left', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
-            () => this._tileActiveWindow(TileZone.BOTTOM_LEFT));
-
-        Main.wm.addKeybinding('tile-bottom-right', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
-            () => this._tileActiveWindow(TileZone.BOTTOM_RIGHT));
-
-        Logger.log('Registering swap-left keybinding');
-        Main.wm.addKeybinding('swap-left', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
-            () => this._swapActiveWindow('left'));
-
-        Logger.log('Registering swap-right keybinding');
-        Main.wm.addKeybinding('swap-right', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
-            () => this._swapActiveWindow('right'));
-
-        Logger.log('Registering swap-up keybinding');
-        Main.wm.addKeybinding('swap-up', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
-            () => this._swapActiveWindow('up'));
-
-        Logger.log('Registering swap-down keybinding');
-        Main.wm.addKeybinding('swap-down', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
-            () => this._swapActiveWindow('down'));
+        // Main.wm.addKeybinding('tile-left', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
+        //     () => this._tileActiveWindow(TileZone.LEFT_FULL));
+        //
+        // Main.wm.addKeybinding('tile-right', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
+        //     () => this._tileActiveWindow(TileZone.RIGHT_FULL));
+        //
+        // Main.wm.addKeybinding('tile-top-left', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
+        //     () => this._tileActiveWindow(TileZone.TOP_LEFT));
+        //
+        // Main.wm.addKeybinding('tile-top-right', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
+        //     () => this._tileActiveWindow(TileZone.TOP_RIGHT));
+        //
+        // Main.wm.addKeybinding('tile-bottom-left', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
+        //     () => this._tileActiveWindow(TileZone.BOTTOM_LEFT));
+        //
+        // Main.wm.addKeybinding('tile-bottom-right', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
+        //     () => this._tileActiveWindow(TileZone.BOTTOM_RIGHT));
+        //
+        // Logger.log('Registering swap-left keybinding');
+        // Main.wm.addKeybinding('swap-left', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
+        //     () => this._swapActiveWindow('left'));
+        //
+        // Logger.log('Registering swap-right keybinding');
+        // Main.wm.addKeybinding('swap-right', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
+        //     () => this._swapActiveWindow('right'));
+        //
+        // Logger.log('Registering swap-up keybinding');
+        // Main.wm.addKeybinding('swap-up', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
+        //     () => this._swapActiveWindow('up'));
+        //
+        // Logger.log('Registering swap-down keybinding');
+        // Main.wm.addKeybinding('swap-down', settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL,
+        //     () => this._swapActiveWindow('down'));
 
         Logger.log('All swap keybindings registered successfully');
         Logger.log('Keyboard shortcuts registered');
@@ -459,16 +459,16 @@ export default class WindowMosaicExtension extends Extension {
             this.windowHandler.destroy();
         }
 
-        Main.wm.removeKeybinding('tile-left');
-        Main.wm.removeKeybinding('tile-right');
-        Main.wm.removeKeybinding('tile-top-left');
-        Main.wm.removeKeybinding('tile-top-right');
-        Main.wm.removeKeybinding('tile-bottom-left');
-        Main.wm.removeKeybinding('tile-bottom-right');
-        Main.wm.removeKeybinding('swap-left');
-        Main.wm.removeKeybinding('swap-right');
-        Main.wm.removeKeybinding('swap-up');
-        Main.wm.removeKeybinding('swap-down');
+        // Main.wm.removeKeybinding('tile-left');
+        // Main.wm.removeKeybinding('tile-right');
+        // Main.wm.removeKeybinding('tile-top-left');
+        // Main.wm.removeKeybinding('tile-top-right');
+        // Main.wm.removeKeybinding('tile-bottom-left');
+        // Main.wm.removeKeybinding('tile-bottom-right');
+        // Main.wm.removeKeybinding('swap-left');
+        // Main.wm.removeKeybinding('swap-right');
+        // Main.wm.removeKeybinding('swap-up');
+        // Main.wm.removeKeybinding('swap-down');
         Logger.log('Keyboard shortcuts removed');
 
         if (this.dragHandler) this.dragHandler.destroy();
