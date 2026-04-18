@@ -94,7 +94,7 @@ export const WindowingManager = GObject.registerClass({
         let _windows = [];
         let windows = workspace.list_windows();
         for (let window of windows)
-            if (window.get_monitor() === monitor && (this.isRelated(window) || allow_unrelated))
+            if ((monitor === null || window.get_monitor() === monitor) && (this.isRelated(window) || allow_unrelated))
                 _windows.push(window);
         
         // Store in cache
@@ -525,3 +525,4 @@ export const WindowingManager = GObject.registerClass({
         this._animationsManager = null;
     }
 });
+

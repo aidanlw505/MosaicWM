@@ -706,7 +706,7 @@ export const WindowHandler = GObject.registerClass({
                     expectedWorkspace = resultWorkspace;
                 }
 
-                const managedWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor)
+                const managedWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, null) // null checks all monitors
                     .filter(w => !this.windowingManager.isExcluded(w) && !WindowState.get(w, 'pendingInQueue'));
 
                 if (managedWindows.length === 0) {
@@ -1175,8 +1175,8 @@ export const WindowHandler = GObject.registerClass({
                     this._ext.tilingManager.tileWorkspaceWindows(WORKSPACE, null, MONITOR, true);
                 }
             } else {
-                // Workspace is now empty of mosaic windows
-                const allRelatedWindows = this._ext.windowingManager.getMonitorWorkspaceWindows(WORKSPACE, MONITOR)
+                // Workspace is now empty of mosaic windows on this monitor — check all monitors before navigating
+                const allRelatedWindows = this._ext.windowingManager.getMonitorWorkspaceWindows(WORKSPACE, null)
                     .filter(w => w.get_id() !== removedId);
                 if (allRelatedWindows.length === 0) {
                     if (WORKSPACE.index() < 0) {
@@ -1452,3 +1452,4 @@ export const WindowHandler = GObject.registerClass({
     }
 
 });
+
