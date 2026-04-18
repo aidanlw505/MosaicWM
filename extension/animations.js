@@ -307,7 +307,7 @@ export const AnimationsManager = GObject.registerClass({
                              Math.abs(currentRect.width - rect.width) > constants.ANIMATION_DIFF_THRESHOLD ||
                              Math.abs(currentRect.height - rect.height) > constants.ANIMATION_DIFF_THRESHOLD;
             
-            Logger.log(`animateReTiling: single window, current=(${currentRect.x},${currentRect.y}), target=(${rect.x},${rect.y}), needsMove=${needsMove}`);
+            Logger.log(`animateReTiling: single window, current=(${currentRect.x},${currentRect.y}) size=${currentRect.width}x${currentRect.height} monitor=${window.get_monitor()}, target=(${rect.x},${rect.y}) size=${rect.width}x${rect.height}, needsMove=${needsMove}`);
             
             if (!needsMove) {
                 window.move_resize_frame(false, rect.x, rect.y, rect.width, rect.height);

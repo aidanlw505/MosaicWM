@@ -49,7 +49,7 @@ export const WindowHandler = GObject.registerClass({
             if (!win) return true;
 
             const frame = win.get_frame_rect();
-            Logger.log(`[PATCH SIZE CHECK] _shouldAnimateActor intercepted window ${win.get_id()} with size ${frame.width}x${frame.height}`);
+            Logger.log(`[PATCH SIZE CHECK] _shouldAnimateActor intercepted window ${win.get_id()} with size ${frame.width}x${frame.height}, pos=(${frame.x},${frame.y}), monitor=${win.get_monitor()}`);
 
             const stack = (new Error()).stack;
             if (!stack.includes('_mapWindow@') && !stack.includes('mapWindow') && !stack.includes('size_change')) return true;
@@ -1085,6 +1085,32 @@ export const WindowHandler = GObject.registerClass({
 
                     // Mark window as waiting for geometry - prevents premature overflow
                     WindowState.set(WINDOW, 'waitingForGeometry', true);
+
+                    // get_monitor() can lag behind the frame rect during monitor transitions
+                    // (e.g. GNOME "Move to Monitor Right"). Use the frame rect center to determine
+                    // the actual monitor so _ensureWindowFits tiles the correct side.
+                    const cx = frame.x + frame.width / 2;
+                    const cy = frame.y + frame.height / 2;
+                    let actualMonitor = MONITOR;
+                    const nMon = global.display.get_n_monitors();
+                    for (let m = 0; m < nMon; m++) {
+                        const g = global.display.get_monitor_geometry(m);
+                        if (cx >= g.x && cx < g.x + g.width && cy >= g.y && cy < g.y + g.height) {
+                            actualMonitor = m;
+                            break;
+                        }
+                    }
+                    if (actualMonitor !== MONITOR) {
+                        Logger.log(`window-added: monitor crossing detected for ${WINDOW.get_id()}, reported=${MONITOR} actual=${actualMonitor} - tiling on actual monitor`);
+                        WindowState.set(WINDOW, 'crossingMonitor', true);
+                        this.tilingManager.tileWorkspaceWindows(WORKSPACE, null, MONITOR, false);
+                        this._timeoutRegistry.add(constants.ANIMATION_DURATION_MS + 100, () => {
+                            WindowState.remove(WINDOW, 'crossingMonitor');
+                            Logger.log(`Monitor crossing complete for ${WINDOW.get_id()}: tiling monitor ${actualMonitor}`);
+                            this.tilingManager.tileWorkspaceWindows(WORKSPACE, WINDOW, actualMonitor, false);
+                        }, 'clearCrossingMonitor');
+                        return GLib.SOURCE_REMOVE;
+                    }
 
                     this._timeoutRegistry.add(constants.GEOMETRY_CHECK_DELAY_MS, () => {
                         this.waitForGeometry(WINDOW, WORKSPACE, MONITOR);

@@ -356,7 +356,54 @@ export const ResizeHandler = GObject.registerClass({
             this._sizeChanged = true;
             let workspace = window.get_workspace();
             let monitor = window.get_monitor();
-            
+
+            // get_monitor() lags behind the frame rect during monitor transitions.
+            // Compute the actual monitor from the frame center; if they differ the window
+            // is mid-crossing monitors. Exclude it from the old monitor's tile, then tile
+            // the new monitor once the animation settles.
+            {
+                const _f = window.get_frame_rect();
+                const _cx = _f.x + _f.width / 2;
+                const _cy = _f.y + _f.height / 2;
+                for (let _m = 0; _m < global.display.get_n_monitors(); _m++) {
+                    const _g = global.display.get_monitor_geometry(_m);
+                    if (_cx >= _g.x && _cx < _g.x + _g.width && _cy >= _g.y && _cy < _g.y + _g.height) {
+                        if (_m !== monitor) {
+                            Logger.log(`onSizeChanged: monitor crossing detected for ${window.get_id()}, reported=${monitor} actual=${_m}`);
+                            WindowState.set(window, 'crossingMonitor', true);
+                            this.tilingManager.tileWorkspaceWindows(workspace, null, monitor, false);
+
+                            // Tile the destination exactly when GNOME confirms the monitor assignment
+                            let enteredId = global.display.connect('window-entered-monitor', (display, monitorIndex, enteredWindow) => {
+                                if (enteredWindow !== window) return;
+                                global.display.disconnect(enteredId);
+                                enteredId = null;
+                                Logger.log(`onSizeChanged: window-entered-monitor for ${window.get_id()} on monitor ${monitorIndex}`);
+                                this._timeoutRegistry.add(150, () => {
+                                    WindowState.remove(window, 'crossingMonitor');
+                                    this.tilingManager.tileWorkspaceWindows(workspace, window, monitorIndex, false);
+                                    return GLib.SOURCE_REMOVE;
+                                }, 'resizeHandler_monitorCrossingSettle');
+                            });
+                            // Safety fallback in case window-entered-monitor never fires
+                            this._timeoutRegistry.add(1000, () => {
+                                if (enteredId !== null) {
+                                    global.display.disconnect(enteredId);
+                                    enteredId = null;
+                                    WindowState.remove(window, 'crossingMonitor');
+                                    Logger.log(`onSizeChanged: monitor crossing fallback for ${window.get_id()}`);
+                                    this.tilingManager.tileWorkspaceWindows(workspace, window, _m, false);
+                                }
+                            }, 'resizeHandler_monitorCrossingFallback');
+
+                            this._sizeChanged = false;
+                            return;
+                        }
+                        break;
+                    }
+                }
+            }
+
             if (WindowState.get(window, 'movedByOverflow')) {
                 this._sizeChanged = false;
                 return;

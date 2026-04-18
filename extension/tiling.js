@@ -1145,6 +1145,9 @@ export const TilingManager = GObject.registerClass({
             const excludedId = this._excludedWindow.get_id();
             meta_windows = meta_windows.filter(w => w.get_id() !== excludedId);
         }
+
+        // Exclude windows mid-crossing between monitors — their get_monitor() is stale
+        meta_windows = meta_windows.filter(w => !WindowState.get(w, 'crossingMonitor'));
         
         let edgeTiledWindows = [];
         if (this._edgeTilingManager) {
@@ -1306,7 +1309,7 @@ export const TilingManager = GObject.registerClass({
             return { overflow: false, layout: null };
         }
 
-        Logger.log(`tileWorkspaceWindows: Starting for workspace ${workspace.index()} (isRecursive=${isRecursive})`);
+        Logger.log(`tileWorkspaceWindows: Starting for workspace ${workspace.index()} monitor=${_monitor} ref=${reference_meta_window ? `${reference_meta_window.get_id()} pos=(${reference_meta_window.get_frame_rect().x},${reference_meta_window.get_frame_rect().y}) monitor=${reference_meta_window.get_monitor()}` : 'null'} (isRecursive=${isRecursive})`);
 
         // Clear previous masks before drawing; recycle boxes if dragging.
         if (!isRecursive && !dryRun) {
@@ -1367,7 +1370,7 @@ export const TilingManager = GObject.registerClass({
         let edgeTiledWindows = [];
         if (this._edgeTilingManager) {
             edgeTiledWindows = this._edgeTilingManager.getEdgeTiledWindows(workspace, monitor);
-            Logger.log(`tileWorkspaceWindows: Found ${edgeTiledWindows.length} edge-tiled windows`);
+            Logger.log(`tileWorkspaceWindows: Found ${edgeTiledWindows.length} edge-tiled windows on monitor=${monitor}`);
         }
         
         if (edgeTiledWindows.length > 0) {
@@ -1540,7 +1543,7 @@ export const TilingManager = GObject.registerClass({
             }
         }
         
-        Logger.log(`Drawing tiles - isDragging: ${this.isDragging}, using tileArea: x=${tileArea.x}, y=${tileArea.y}`);
+        Logger.log(`Drawing tiles - isDragging: ${this.isDragging}, monitor=${monitor}, tileArea: x=${tileArea.x}, y=${tileArea.y}, w=${tileArea.width}, h=${tileArea.height}, ref=${reference_meta_window ? `${reference_meta_window.get_id()} pos=(${reference_meta_window.get_frame_rect().x},${reference_meta_window.get_frame_rect().y}) monitor=${reference_meta_window.get_monitor()}` : 'null'}`);
         
         // ANIMATIONS
         let animationsHandledPositioning = false;
@@ -1576,7 +1579,8 @@ export const TilingManager = GObject.registerClass({
             return true;
         }
 
-        Logger.log(`canFitWindow: Checking if window can fit in workspace ${workspace.index()} (relaxed=${relaxed})`);
+        const _cfwFrame = window.get_frame_rect();
+        Logger.log(`canFitWindow: Checking if window ${window.get_id()} pos=(${_cfwFrame.x},${_cfwFrame.y}) size=${_cfwFrame.width}x${_cfwFrame.height} monitor=${window.get_monitor()} can fit in workspace ${workspace.index()} targetMonitor=${monitor} (relaxed=${relaxed})`);
         
         // Excluded windows (Always on Top, Sticky) coexist with sacred windows and don't participating in tiling.
         if (this._windowingManager.isExcluded(window)) {
@@ -1721,7 +1725,8 @@ export const TilingManager = GObject.registerClass({
         }
         
         if (windowAlreadyInWorkspace) {
-            Logger.log(`canFitWindow: Window already in workspace - checking current layout`);
+            const _alreadyFrame = window.get_frame_rect();
+            Logger.log(`canFitWindow: Window ${window.get_id()} already in workspace - pos=(${_alreadyFrame.x},${_alreadyFrame.y}) size=${_alreadyFrame.width}x${_alreadyFrame.height} monitor=${window.get_monitor()} - checking current layout`);
             // Update descriptor size to match reality or override
             const existingDescriptor = windows.find(w => w.id === newWindowId);
             if (existingDescriptor) {
