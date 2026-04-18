@@ -16,6 +16,7 @@ import * as WindowState from './windowState.js';
 const BLACKLISTED_WM_CLASSES = [
     'org.gnome.Screenshot',
     'Gnome-screenshot',
+    'io.github.bugaevc.wl-clipboard',
 ];
 
 import GObject from 'gi://GObject';
