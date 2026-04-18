@@ -848,8 +848,8 @@ export const WindowHandler = GObject.registerClass({
         // Shift held at launch: make always-on-top before any tiling runs
         const [, , creationMods] = global.get_pointer();
         if (creationMods & Clutter.ModifierType.SHIFT_MASK) {
-            window.make_above();
-            Logger.log(`Window ${window.get_id()} opened with Shift — set always-on-top`);
+            // window.make_above();
+            // Logger.log(`Window ${window.get_id()} opened with Shift — set always-on-top`);
         }
 
         if (this.windowingManager.isMaximizedOrFullscreen(window)) {
