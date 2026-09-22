@@ -601,6 +601,18 @@ export const ResizeHandler = GObject.registerClass({
             return;
         }
 
+        // A cross-monitor move (e.g. GNOME's "Move to Monitor", which can carry its own
+        // size-change when the monitors differ in scale) lands its frame on the new monitor
+        // before Meta re-associates the window with it, so get_monitor() here still reports
+        // the old one. Forcing this window back into that monitor's tile grid would cancel
+        // the move before window-left-monitor/window-entered-monitor ever see it happened -
+        // back off and let those signals (which fire right after) retile the real monitor.
+        if (this._frameOutsideMonitor(window, workspace, monitor)) {
+            Logger.log(`_retileAfterSizeChange: ${window.get_id()} frame already outside monitor ${monitor} - deferring to monitor-change signal`);
+            this._sizeChanged = false;
+            return;
+        }
+
         if (!this.windowingManager.isMaximizedOrFullscreen(window)) {
             const isManualResize = this._currentGrabOp && isResizeGrabOp(this._currentGrabOp);
             const windowId = window.get_id();
@@ -621,6 +633,21 @@ export const ResizeHandler = GObject.registerClass({
 
         this.tilingManager.tileWorkspaceWindows(workspace, null, monitor, true);
         this._sizeChanged = false;
+    }
+
+    // True when the window's actual frame center no longer falls within the work area of
+    // the monitor Meta currently has it associated with - a sign the frame already relocated
+    // to another monitor and get_monitor()'s answer is momentarily stale.
+    _frameOutsideMonitor(window, workspace, monitor) {
+        if (!workspace || monitor === null || monitor === undefined) return false;
+        const workArea = workspace.get_work_area_for_monitor(monitor);
+        if (!workArea) return false;
+
+        const rect = window.get_frame_rect();
+        const centerX = rect.x + rect.width / 2;
+        const centerY = rect.y + rect.height / 2;
+        return centerX < workArea.x || centerX >= workArea.x + workArea.width ||
+            centerY < workArea.y || centerY >= workArea.y + workArea.height;
     }
 
     _retileDuringActiveResize(window, workspace, monitor, resizeNow) {
